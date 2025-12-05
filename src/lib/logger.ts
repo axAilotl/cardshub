@@ -1,88 +1,125 @@
 /**
- * Winston-based logging infrastructure.
- * Provides structured logging with different transports for dev/prod.
+ * Logging infrastructure.
+ * Uses Winston on Node.js, console on Cloudflare Workers.
  */
 
-import winston from 'winston';
-
-const { combine, timestamp, printf, colorize, json, errors } = winston.format;
-
-// Custom format for development (colorized, human-readable)
-const devFormat = combine(
-  colorize({ all: true }),
-  timestamp({ format: 'HH:mm:ss' }),
-  errors({ stack: true }),
-  printf(({ level, message, timestamp, ...meta }) => {
-    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-    return `${timestamp} [${level}]: ${message}${metaStr}`;
-  })
-);
-
-// JSON format for production (structured, machine-parseable)
-const prodFormat = combine(
-  timestamp(),
-  errors({ stack: true }),
-  json()
-);
+// Detect Cloudflare Workers runtime (no process.versions.node, has caches global)
+const isCloudflare = typeof process === 'undefined' ||
+  (typeof globalThis !== 'undefined' && 'caches' in globalThis && !process?.versions?.node);
 
 // Determine environment
-const isProduction = process.env.NODE_ENV === 'production';
-const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-const logLevel = process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug');
+const isProduction = typeof process !== 'undefined' && process.env?.NODE_ENV === 'production';
+const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || process.env?.VITEST === 'true');
+const logLevel = (typeof process !== 'undefined' && process.env?.LOG_LEVEL) || (isProduction ? 'info' : 'debug');
 
-// Create transports based on environment
-const transports: winston.transport[] = [];
+// Simple logger interface
+interface SimpleLogger {
+  error(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  debug(message: string, meta?: Record<string, unknown>): void;
+  log(level: string, message: string, meta?: Record<string, unknown>): void;
+  child(meta: Record<string, unknown>): SimpleLogger;
+}
 
-if (!isTest) {
-  // Console transport (always, except in tests)
-  transports.push(
-    new winston.transports.Console({
-      format: isProduction ? prodFormat : devFormat,
-      level: logLevel,
+// Create a simple console-based logger for Cloudflare
+function createSimpleLogger(): SimpleLogger {
+  const formatMeta = (meta?: Record<string, unknown>) =>
+    meta && Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+
+  return {
+    error: (msg, meta) => console.error(`[ERROR] ${msg}${formatMeta(meta)}`),
+    warn: (msg, meta) => console.warn(`[WARN] ${msg}${formatMeta(meta)}`),
+    info: (msg, meta) => console.info(`[INFO] ${msg}${formatMeta(meta)}`),
+    debug: (msg, meta) => logLevel === 'debug' && console.debug(`[DEBUG] ${msg}${formatMeta(meta)}`),
+    log: (level, msg, meta) => console.log(`[${level.toUpperCase()}] ${msg}${formatMeta(meta)}`),
+    child: () => createSimpleLogger(),
+  };
+}
+
+// Create logger based on environment
+let logger: SimpleLogger;
+
+if (isCloudflare) {
+  // Use simple console logger on Cloudflare Workers
+  logger = createSimpleLogger();
+} else {
+  // Use Winston on Node.js
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const winston = require('winston');
+  const { combine, timestamp, printf, colorize, json, errors } = winston.format;
+
+  // Custom format for development (colorized, human-readable)
+  const devFormat = combine(
+    colorize({ all: true }),
+    timestamp({ format: 'HH:mm:ss' }),
+    errors({ stack: true }),
+    printf(({ level, message, timestamp, ...meta }: { level: string; message: string; timestamp: string; [key: string]: unknown }) => {
+      const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+      return `${timestamp} [${level}]: ${message}${metaStr}`;
     })
   );
 
-  // File transports for production
-  if (isProduction) {
-    // Error log (errors only)
+  // JSON format for production (structured, machine-parseable)
+  const prodFormat = combine(
+    timestamp(),
+    errors({ stack: true }),
+    json()
+  );
+
+  // Create transports based on environment
+  const transports: unknown[] = [];
+
+  if (!isTest) {
+    // Console transport (always, except in tests)
     transports.push(
-      new winston.transports.File({
-        filename: 'logs/error.log',
-        level: 'error',
-        format: prodFormat,
-        maxsize: 10 * 1024 * 1024, // 10MB
-        maxFiles: 5,
+      new winston.transports.Console({
+        format: isProduction ? prodFormat : devFormat,
+        level: logLevel,
       })
     );
 
-    // Combined log (all levels)
+    // File transports for production (Node.js only, not Cloudflare)
+    if (isProduction && !isCloudflare) {
+      // Error log (errors only)
+      transports.push(
+        new winston.transports.File({
+          filename: 'logs/error.log',
+          level: 'error',
+          format: prodFormat,
+          maxsize: 10 * 1024 * 1024, // 10MB
+          maxFiles: 5,
+        })
+      );
+
+      // Combined log (all levels)
+      transports.push(
+        new winston.transports.File({
+          filename: 'logs/combined.log',
+          format: prodFormat,
+          maxsize: 10 * 1024 * 1024, // 10MB
+          maxFiles: 5,
+        })
+      );
+    }
+  } else {
+    // Silent transport for tests (can be enabled via LOG_LEVEL=debug)
     transports.push(
-      new winston.transports.File({
-        filename: 'logs/combined.log',
-        format: prodFormat,
-        maxsize: 10 * 1024 * 1024, // 10MB
-        maxFiles: 5,
+      new winston.transports.Console({
+        silent: process.env.LOG_LEVEL !== 'debug',
+        format: devFormat,
       })
     );
   }
-} else {
-  // Silent transport for tests (can be enabled via LOG_LEVEL=debug)
-  transports.push(
-    new winston.transports.Console({
-      silent: process.env.LOG_LEVEL !== 'debug',
-      format: devFormat,
-    })
-  );
-}
 
-// Create the logger instance
-const logger = winston.createLogger({
-  level: logLevel,
-  defaultMeta: { service: 'cardshub' },
-  transports,
-  // Don't exit on handled exceptions
-  exitOnError: false,
-});
+  // Create the winston logger instance
+  logger = winston.createLogger({
+    level: logLevel,
+    defaultMeta: { service: 'cardshub' },
+    transports,
+    exitOnError: false,
+  });
+}
 
 // Export the logger
 export default logger;
@@ -94,7 +131,7 @@ export const log = logger;
  * Create a child logger with additional context.
  * Useful for adding request ID, user ID, etc.
  */
-export function createChildLogger(meta: Record<string, unknown>): winston.Logger {
+export function createChildLogger(meta: Record<string, unknown>): SimpleLogger {
   return logger.child(meta);
 }
 
