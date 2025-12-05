@@ -1,0 +1,311 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { Modal, ModalBody, Button, Badge } from '@/components/ui';
+import type { CardListItem, SourceFormat } from '@/types/card';
+import { useAuth } from '@/lib/auth/context';
+import { cn } from '@/lib/utils/cn';
+
+// Format badge component
+function FormatBadge({ format, specVersion, className }: { format: SourceFormat; specVersion: string; className?: string }) {
+  const isPackage = format === 'charx' || format === 'voxta';
+  const label = isPackage ? format.toUpperCase() : specVersion.toUpperCase();
+
+  const colorClasses = {
+    charx: 'bg-amber-500/80 text-white',
+    voxta: 'bg-purple-500/80 text-white',
+    v2: 'bg-blue-500/80 text-white',
+    v3: 'bg-emerald-500/80 text-white',
+  };
+
+  const colorClass = isPackage
+    ? colorClasses[format as 'charx' | 'voxta']
+    : colorClasses[specVersion as 'v2' | 'v3'] || 'bg-gray-500/80 text-white';
+
+  return (
+    <span className={cn('px-2 py-0.5 rounded text-xs font-semibold uppercase', colorClass, className)}>
+      {label}
+    </span>
+  );
+}
+
+interface CardModalProps {
+  card: CardListItem | null;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').trim();
+}
+
+function formatDate(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+export function CardModal({ card, isOpen, onClose }: CardModalProps) {
+  const { user } = useAuth();
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [favoritesCount, setFavoritesCount] = useState(0);
+  const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
+
+  useEffect(() => {
+    if (card) {
+      setFavoritesCount(card.favoritesCount);
+      setIsFavorited(false);
+      if (user) {
+        fetch(`/api/cards/${card.slug}/favorite`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.data?.isFavorited !== undefined) {
+              setIsFavorited(data.data.isFavorited);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  }, [card, user]);
+
+  if (!card) return null;
+
+  const score = card.upvotes - card.downvotes;
+
+  const handleFavoriteClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (!user || isTogglingFavorite) return;
+
+    setIsTogglingFavorite(true);
+    try {
+      const response = await fetch(`/api/cards/${card.slug}/favorite`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setIsFavorited(data.data.isFavorited);
+        setFavoritesCount(data.data.favoritesCount);
+      }
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+    } finally {
+      setIsTogglingFavorite(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="xl">
+      <ModalBody className="p-0">
+        <div className="flex flex-col lg:flex-row">
+          {/* Left side - Image */}
+          <div className="relative w-full lg:w-2/5 aspect-[3/4] lg:aspect-auto lg:min-h-[600px] flex-shrink-0">
+            {(card.thumbnailPath || card.imagePath) ? (
+              <Image
+                src={card.thumbnailPath || card.imagePath!}
+                alt={card.name}
+                fill
+                className="object-cover rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none"
+              />
+            ) : (
+              <div className="w-full h-full bg-cosmic-teal/50 flex items-center justify-center rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none">
+                <span className="text-8xl text-starlight/30">?</span>
+              </div>
+            )}
+          </div>
+
+          {/* Right side - Content */}
+          <div className="flex-1 p-6 space-y-5 overflow-y-auto max-h-[600px] lg:max-h-none">
+            {/* Header with close button */}
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-bold gradient-text">{card.name}</h2>
+                {card.creator && (
+                  <Link
+                    href={`/explore?search=${encodeURIComponent(card.creator)}`}
+                    className="text-sm text-starlight/60 hover:text-nebula mt-1 block"
+                    onClick={onClose}
+                  >
+                    by <span className="text-nebula">{card.creator}</span>
+                  </Link>
+                )}
+              </div>
+              <button
+                onClick={onClose}
+                className="text-starlight/60 hover:text-starlight text-2xl leading-none p-1 -mt-1"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Tagline / Description */}
+            {card.description && (
+              <p className="text-starlight/80 text-sm leading-relaxed line-clamp-3">
+                {stripHtml(card.description)}
+              </p>
+            )}
+
+            {/* Tags */}
+            {card.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {card.tags.map((tag) => (
+                  <Link
+                    key={tag.id}
+                    href={`/explore?tags=${tag.slug}`}
+                    onClick={onClose}
+                    className="text-xs px-2 py-1 rounded-full bg-nebula/20 text-nebula hover:bg-nebula/30 transition-colors"
+                  >
+                    {tag.name}
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            {/* Stats row (read-only, no voting buttons) */}
+            <div className="flex items-center flex-wrap gap-3 p-3 rounded-lg bg-deep-space/50">
+              {/* Score display */}
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-starlight/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                </svg>
+                <span className={`font-bold ${score >= 0 ? 'text-aurora' : 'text-red-400'}`}>
+                  {score >= 0 ? '+' : ''}{score}
+                </span>
+              </div>
+
+              <div className="w-px h-6 bg-nebula/20" />
+
+              {/* Favorites - interactive */}
+              <button
+                onClick={handleFavoriteClick}
+                disabled={!user || isTogglingFavorite}
+                className={cn(
+                  'flex items-center gap-1.5 transition-colors',
+                  user ? 'hover:text-pink-400 cursor-pointer' : 'cursor-default',
+                  isFavorited ? 'text-pink-400' : 'text-starlight/60'
+                )}
+                title={user ? (isFavorited ? 'Remove from favorites' : 'Add to favorites') : 'Login to favorite'}
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill={isFavorited ? 'currentColor' : 'none'}
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                </svg>
+                <span>{favoritesCount}</span>
+              </button>
+
+              <div className="w-px h-6 bg-nebula/20" />
+
+              {/* Downloads */}
+              <div className="flex items-center gap-1.5 text-starlight/60">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{card.downloadsCount.toLocaleString()}</span>
+              </div>
+
+              <div className="w-px h-6 bg-nebula/20" />
+
+              {/* Format badge */}
+              <FormatBadge format={card.sourceFormat} specVersion={card.specVersion} />
+
+              <div className="w-px h-6 bg-nebula/20" />
+
+              {/* Token count with coin icon */}
+              <div className="flex items-center gap-1.5 text-starlight/60">
+                <svg className="w-5 h-5 text-solar" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor" fontWeight="bold">T</text>
+                </svg>
+                <span className="font-medium">{card.tokensTotal.toLocaleString()}</span>
+              </div>
+
+              {/* Asset count for charx/voxta */}
+              {card.hasAssets && card.assetsCount > 0 && (
+                <>
+                  <div className="w-px h-6 bg-nebula/20" />
+                  <div className="flex items-center gap-1.5 text-starlight/60">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                    </svg>
+                    <span>{card.assetsCount} asset{card.assetsCount !== 1 ? 's' : ''}</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Metadata badges */}
+            <div className="flex flex-wrap gap-2">
+              {card.hasAlternateGreetings && card.alternateGreetingsCount > 0 && (
+                <Badge variant="info" className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  {card.alternateGreetingsCount} Greeting{card.alternateGreetingsCount !== 1 ? 's' : ''}
+                </Badge>
+              )}
+              {card.hasLorebook && (
+                <Badge variant="success" className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                  Lorebook{card.lorebookEntriesCount > 0 ? ` (${card.lorebookEntriesCount})` : ''}
+                </Badge>
+              )}
+              {card.hasEmbeddedImages && card.embeddedImagesCount > 0 && (
+                <Badge variant="warning" className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {card.embeddedImagesCount} Image{card.embeddedImagesCount !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </div>
+
+            {/* Creator notes preview */}
+            {card.creatorNotes && (
+              <div>
+                <h4 className="font-semibold mb-2 text-sm text-starlight/70">Creator Notes</h4>
+                <p className="text-starlight/60 text-sm line-clamp-4 bg-deep-space/30 p-3 rounded">
+                  {stripHtml(card.creatorNotes)}
+                </p>
+              </div>
+            )}
+
+            {/* Dates */}
+            <div className="flex gap-4 text-xs text-starlight/50">
+              <div>
+                <span>Created: </span>
+                <span className="text-starlight/70">{formatDate(card.createdAt)}</span>
+              </div>
+              {card.updatedAt !== card.createdAt && (
+                <div>
+                  <span>Updated: </span>
+                  <span className="text-starlight/70">{formatDate(card.updatedAt)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* View full profile button */}
+            <div className="pt-2">
+              <Link href={`/card/${card.slug}`} className="block">
+                <Button variant="secondary" className="w-full">
+                  View Full Profile
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </ModalBody>
+    </Modal>
+  );
+}

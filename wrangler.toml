@@ -1,0 +1,42 @@
+# CardsHub - Cloudflare Pages Configuration
+name = "cardshub"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Pages configuration
+pages_build_output_dir = ".vercel/output/static"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "cardshub-db"
+database_id = "YOUR_D1_DATABASE_ID"  # Replace after creating: wrangler d1 create cardshub-db
+
+# R2 Bucket binding
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "cardshub-uploads"
+# preview_bucket_name = "cardshub-uploads-preview"  # Optional for preview deployments
+
+# Environment variables (set via dashboard or wrangler secret)
+# DISCORD_CLIENT_ID
+# DISCORD_CLIENT_SECRET
+
+[vars]
+NEXT_PUBLIC_APP_URL = "https://cardshub.pages.dev"  # Update to your domain
+
+# Development overrides
+[env.development]
+[env.development.vars]
+NEXT_PUBLIC_APP_URL = "http://localhost:3000"
+
+# Preview/staging environment
+[env.preview]
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "cardshub-db-preview"
+database_id = "YOUR_PREVIEW_D1_DATABASE_ID"
+
+[[env.preview.r2_buckets]]
+binding = "R2"
+bucket_name = "cardshub-uploads-preview"
