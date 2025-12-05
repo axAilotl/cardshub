@@ -3,6 +3,10 @@ import type { CardListItem, CardDetail, CardFilters, PaginatedResponse } from '@
 import { createHash } from 'crypto';
 import { nanoid } from 'nanoid';
 
+// TODO: Convert all functions to async for D1 compatibility
+// Currently uses sync better-sqlite3 which works for local development
+// but will fail on Cloudflare D1 (async-only)
+
 /**
  * Get paginated list of cards with filtering
  * Now joins cards with card_versions via head_version_id
