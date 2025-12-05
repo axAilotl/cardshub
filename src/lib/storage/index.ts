@@ -8,7 +8,6 @@
  * - ipfs://Qm... (IPFS - future)
  */
 
-import { FileStorageDriver } from './file';
 import { R2StorageDriver } from './r2';
 import { isCloudflare } from '@/lib/cloudflare/env';
 
@@ -42,19 +41,34 @@ export interface StorageDriver {
 // Storage driver registry
 const drivers: Map<string, StorageDriver> = new Map();
 
-// Register the file driver
-const fileDriver = new FileStorageDriver();
-drivers.set('file', fileDriver);
-
-// Register the R2 driver
+// R2 driver is always available
 const r2Driver = new R2StorageDriver();
 drivers.set('r2', r2Driver);
+
+// File driver is loaded dynamically (only on Node.js)
+let fileDriverLoaded = false;
+async function ensureFileDriver(): Promise<void> {
+  if (fileDriverLoaded || isCloudflare()) return;
+  try {
+    const { FileStorageDriver } = await import('./file');
+    drivers.set('file', new FileStorageDriver());
+    fileDriverLoaded = true;
+  } catch {
+    // File driver not available
+  }
+}
 
 /**
  * Get the appropriate driver for a storage URL
  */
-function getDriver(url: string): StorageDriver {
+async function getDriver(url: string): Promise<StorageDriver> {
   const scheme = url.split('://')[0];
+
+  // Ensure file driver is loaded if needed
+  if (scheme === 'file') {
+    await ensureFileDriver();
+  }
+
   const driver = drivers.get(scheme);
 
   if (!driver) {
@@ -79,6 +93,12 @@ export async function store(data: Buffer, path: string): Promise<string> {
   if (isCloudflare()) {
     return r2Driver.store(data, path);
   }
+  // Load file driver dynamically for Node.js
+  await ensureFileDriver();
+  const fileDriver = drivers.get('file');
+  if (!fileDriver) {
+    throw new Error('File storage driver not available');
+  }
   return fileDriver.store(data, path);
 }
 
@@ -86,7 +106,7 @@ export async function store(data: Buffer, path: string): Promise<string> {
  * Retrieve a blob by its storage URL
  */
 export async function retrieve(url: string): Promise<Buffer> {
-  const driver = getDriver(url);
+  const driver = await getDriver(url);
   return driver.retrieve(url);
 }
 
@@ -94,7 +114,7 @@ export async function retrieve(url: string): Promise<Buffer> {
  * Delete a blob by its storage URL
  */
 export async function deleteBlob(url: string): Promise<void> {
-  const driver = getDriver(url);
+  const driver = await getDriver(url);
   return driver.delete(url);
 }
 
@@ -102,7 +122,7 @@ export async function deleteBlob(url: string): Promise<void> {
  * Check if a blob exists
  */
 export async function exists(url: string): Promise<boolean> {
-  const driver = getDriver(url);
+  const driver = await getDriver(url);
   return driver.exists(url);
 }
 
@@ -110,8 +130,14 @@ export async function exists(url: string): Promise<boolean> {
  * Get the public URL for serving
  */
 export function getPublicUrl(url: string): string {
-  const driver = getDriver(url);
-  return driver.getPublicUrl(url);
+  // For getPublicUrl, we use synchronous access since it doesn't need async loading
+  const scheme = url.split('://')[0];
+  if (scheme === 'r2') {
+    return r2Driver.getPublicUrl(url);
+  }
+  // For file URLs, use static path transformation
+  const path = url.replace(/^file:\/\/\//, '');
+  return `/api/uploads/${path}`;
 }
 
 /**
