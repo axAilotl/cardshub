@@ -1,4 +1,6 @@
-import sharp from 'sharp';
+// Sharp is dynamically imported to avoid crashes on Cloudflare Workers
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let sharpModule: any = null;
 
 export interface ThumbnailResult {
   buffer: Buffer;
@@ -18,14 +20,24 @@ const CONFIG = {
 /**
  * Generate a thumbnail buffer from an image buffer
  * Does NOT write to disk.
+ * Note: Only works on Node.js (requires sharp). Returns null on Cloudflare Workers.
  */
 export async function generateThumbnailBuffer(
   imageBuffer: Buffer,
   type: ThumbnailType = 'main'
 ): Promise<ThumbnailResult> {
+  // Dynamically import sharp only when needed (Node.js only)
+  if (!sharpModule) {
+    try {
+      sharpModule = (await import('sharp')).default;
+    } catch {
+      throw new Error('Sharp is not available in this environment');
+    }
+  }
+
   const config = CONFIG[type];
 
-  const image = sharp(imageBuffer);
+  const image = sharpModule(imageBuffer);
   const metadata = await image.metadata();
 
   const originalWidth = metadata.width || 500;
