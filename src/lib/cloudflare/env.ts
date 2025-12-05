@@ -65,27 +65,31 @@ export async function getR2(): Promise<R2Bucket | null> {
  * Works on both Node.js (process.env) and Cloudflare (context.env)
  */
 export async function getDiscordCredentials(): Promise<{ clientId: string; clientSecret: string } | null> {
-  // Try Cloudflare context first
-  const ctx = await getCloudflareContext();
+  // On OpenNext/Cloudflare, vars from wrangler.toml should be in process.env
+  // Secrets set via `wrangler secret` should also be available
 
+  // Check process.env first (works in both Node.js and OpenNext/Cloudflare)
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+
+  console.log('[Discord Auth] process.env.DISCORD_CLIENT_ID:', clientId ? `set (${clientId.substring(0, 5)}...)` : 'not set');
+  console.log('[Discord Auth] process.env.DISCORD_CLIENT_SECRET:', clientSecret ? 'set' : 'not set');
+
+  if (clientId && clientSecret) {
+    return { clientId, clientSecret };
+  }
+
+  // Try Cloudflare context as fallback
+  const ctx = await getCloudflareContext();
   console.log('[Discord Auth] Cloudflare context:', ctx ? 'available' : 'null');
-  console.log('[Discord Auth] ctx.env keys:', ctx?.env ? Object.keys(ctx.env) : 'none');
-  console.log('[Discord Auth] process.env.DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID ? 'set' : 'not set');
+  if (ctx?.env) {
+    console.log('[Discord Auth] ctx.env keys:', Object.keys(ctx.env));
+  }
 
   if (ctx?.env.DISCORD_CLIENT_ID && ctx?.env.DISCORD_CLIENT_SECRET) {
-    console.log('[Discord Auth] Using Cloudflare context credentials');
     return {
       clientId: ctx.env.DISCORD_CLIENT_ID,
       clientSecret: ctx.env.DISCORD_CLIENT_SECRET,
-    };
-  }
-
-  // Fall back to process.env (Node.js)
-  if (process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET) {
-    console.log('[Discord Auth] Using process.env credentials');
-    return {
-      clientId: process.env.DISCORD_CLIENT_ID,
-      clientSecret: process.env.DISCORD_CLIENT_SECRET,
     };
   }
 
