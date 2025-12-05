@@ -187,3 +187,28 @@ export function getAsyncD1Db(d1: D1Database): AsyncDb {
 export function closeAsyncDb(): void {
   localDbInstance = null;
 }
+
+// Cached D1-wrapped database for Cloudflare
+let cachedD1Db: AsyncDb | null = null;
+
+/**
+ * Get database instance (unified helper for both environments)
+ * Call this from API routes - handles both local and Cloudflare
+ */
+export async function getDatabase(): Promise<AsyncDb> {
+  if (isCloudflare()) {
+    // On Cloudflare, get D1 from request context
+    if (cachedD1Db) return cachedD1Db;
+
+    // Dynamic import to avoid build issues
+    const { getD1 } = await import('@/lib/cloudflare/env');
+    const d1 = await getD1();
+    if (!d1) {
+      throw new Error('D1 database binding not available');
+    }
+    cachedD1Db = wrapD1(d1);
+    return cachedD1Db;
+  }
+  // Local development with better-sqlite3
+  return getAsyncDb();
+}

@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       tokenHash = generated.hash;
     }
 
-    const { id } = createUpload({
+    const { id } = await createUpload({
       storageUrl,
       path,
       uploaderId: session.user.id,

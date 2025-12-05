@@ -23,7 +23,7 @@ const contentTypes: Record<string, string> = {
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const asset = getUploadById(id);
+    const asset = await getUploadById(id);
 
     if (!asset) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });

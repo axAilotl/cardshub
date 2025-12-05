@@ -1,13 +1,11 @@
 import { type CardRow, type CardVersionRow, type CardWithVersionRow, type TagRow } from './index';
-import { getAsyncDb, type AsyncDb } from './async-db';
+import { getDatabase, type AsyncDb } from './async-db';
 import type { CardListItem, CardDetail, CardFilters, PaginatedResponse } from '@/types/card';
 import { createHash } from 'crypto';
 import { nanoid } from 'nanoid';
 
-// Get async database instance
-function getDb(): AsyncDb {
-  return getAsyncDb();
-}
+// Get async database instance (handles both local and Cloudflare)
+const getDb = getDatabase;
 
 // FTS functions - only work locally, no-op on Cloudflare
 async function updateFtsIndexAsync(cardId: string, name: string, description: string | null, creator: string | null, creatorNotes: string | null): Promise<void> {
@@ -36,7 +34,7 @@ async function removeFtsIndexAsync(cardId: string): Promise<void> {
  * Get paginated list of cards with filtering
  */
 export async function getCards(filters: CardFilters = {}): Promise<PaginatedResponse<CardListItem>> {
-  const db = getDb();
+  const db = await getDb();
   const {
     search,
     tags,
@@ -222,7 +220,7 @@ export async function getCards(filters: CardFilters = {}): Promise<PaginatedResp
  * Get a single card by slug
  */
 export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
-  const db = getDb();
+  const db = await getDb();
 
   const query = `
     SELECT c.*, v.id as version_id, v.storage_url, v.content_hash, v.spec_version, v.source_format,
@@ -292,7 +290,7 @@ export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
 async function getTagsForCards(cardIds: string[]): Promise<Map<string, { id: number; name: string; slug: string; category: string | null }[]>> {
   if (cardIds.length === 0) return new Map();
 
-  const db = getDb();
+  const db = await getDb();
   const placeholders = cardIds.map(() => '?').join(', ');
 
   const rows = await db.prepare(`
@@ -313,7 +311,7 @@ async function getTagsForCards(cardIds: string[]): Promise<Map<string, { id: num
  * Get all tags grouped by category
  */
 export async function getAllTags(): Promise<{ category: string; tags: TagRow[] }[]> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db.prepare(`SELECT id, name, slug, category, usage_count FROM tags ORDER BY category, usage_count DESC, name`).all<TagRow>();
 
   const grouped = new Map<string, TagRow[]>();
@@ -369,7 +367,7 @@ export interface CreateCardInput {
  * Create a new card with its initial version
  */
 export async function createCard(input: CreateCardInput): Promise<{ cardId: string; versionId: string }> {
-  const db = getDb();
+  const db = await getDb();
   const versionId = nanoid();
 
   const statements: { sql: string; params: unknown[] }[] = [];
@@ -532,7 +530,7 @@ export interface CreateVersionInput {
 }
 
 export async function createVersion(input: CreateVersionInput): Promise<string> {
-  const db = getDb();
+  const db = await getDb();
   const versionId = nanoid();
 
   await db.transaction(async () => {
@@ -563,7 +561,7 @@ export async function createVersion(input: CreateVersionInput): Promise<string> 
  * Get version history for a card
  */
 export async function getCardVersions(cardId: string): Promise<CardVersionRow[]> {
-  const db = getDb();
+  const db = await getDb();
   return db.prepare(`SELECT * FROM card_versions WHERE card_id = ? ORDER BY created_at DESC`).all<CardVersionRow>(cardId);
 }
 
@@ -571,7 +569,7 @@ export async function getCardVersions(cardId: string): Promise<CardVersionRow[]>
  * Get a single card version by ID
  */
 export async function getCardVersionById(versionId: string): Promise<CardVersionRow | null> {
-  const db = getDb();
+  const db = await getDb();
   const row = await db.prepare('SELECT * FROM card_versions WHERE id = ?').get<CardVersionRow>(versionId);
   return row || null;
 }
@@ -580,7 +578,7 @@ export async function getCardVersionById(versionId: string): Promise<CardVersion
  * Increment download count
  */
 export async function incrementDownloads(cardId: string): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db.prepare('UPDATE cards SET downloads_count = downloads_count + 1 WHERE id = ?').run(cardId);
 }
 
@@ -588,7 +586,7 @@ export async function incrementDownloads(cardId: string): Promise<void> {
  * Get all valid tag slugs
  */
 export async function getValidTagSlugs(): Promise<Set<string>> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db.prepare('SELECT slug FROM tags').all<{ slug: string }>();
   return new Set(rows.map(r => r.slug));
 }
@@ -597,7 +595,7 @@ export async function getValidTagSlugs(): Promise<Set<string>> {
  * Delete a card and its associated data
  */
 export async function deleteCard(cardId: string): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
 
   await removeFtsIndexAsync(cardId);
 
@@ -632,7 +630,7 @@ export async function deleteCard(cardId: string): Promise<void> {
  * Vote on a card
  */
 export async function voteOnCard(userId: string, cardId: string, vote: 1 | -1): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
 
   await db.transaction(async () => {
     const existing = await db.prepare('SELECT vote FROM votes WHERE user_id = ? AND card_id = ?').get<{ vote: number }>(userId, cardId);
@@ -659,7 +657,7 @@ export async function voteOnCard(userId: string, cardId: string, vote: 1 | -1): 
  * Get user's vote on a card
  */
 export async function getUserVote(userId: string, cardId: string): Promise<number | null> {
-  const db = getDb();
+  const db = await getDb();
   const row = await db.prepare('SELECT vote FROM votes WHERE user_id = ? AND card_id = ?').get<{ vote: number }>(userId, cardId);
   return row?.vote || null;
 }
@@ -668,7 +666,7 @@ export async function getUserVote(userId: string, cardId: string): Promise<numbe
  * Toggle favorite on a card
  */
 export async function toggleFavorite(userId: string, cardId: string): Promise<boolean> {
-  const db = getDb();
+  const db = await getDb();
   let isFavorited = false;
 
   await db.transaction(async () => {
@@ -692,7 +690,7 @@ export async function toggleFavorite(userId: string, cardId: string): Promise<bo
  * Check if user has favorited a card
  */
 export async function isFavorited(userId: string, cardId: string): Promise<boolean> {
-  const db = getDb();
+  const db = await getDb();
   const row = await db.prepare('SELECT 1 FROM favorites WHERE user_id = ? AND card_id = ?').get(userId, cardId);
   return !!row;
 }
@@ -701,7 +699,7 @@ export async function isFavorited(userId: string, cardId: string): Promise<boole
  * Get user's favorites
  */
 export async function getUserFavorites(userId: string): Promise<string[]> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db.prepare('SELECT card_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC').all<{ card_id: string }>(userId);
   return rows.map(r => r.card_id);
 }
@@ -710,7 +708,7 @@ export async function getUserFavorites(userId: string): Promise<string[]> {
  * Add a comment to a card
  */
 export async function addComment(cardId: string, userId: string, content: string, parentId?: string): Promise<string> {
-  const db = getDb();
+  const db = await getDb();
   const commentId = nanoid();
 
   await db.transaction(async () => {
@@ -725,7 +723,7 @@ export async function addComment(cardId: string, userId: string, content: string
  * Get comments for a card
  */
 export async function getComments(cardId: string): Promise<{ id: string; userId: string; username: string; displayName: string | null; parentId: string | null; content: string; createdAt: number }[]> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db.prepare(`
     SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, u.username, u.display_name
     FROM comments c JOIN users u ON c.user_id = u.id WHERE c.card_id = ? ORDER BY c.created_at ASC
@@ -738,7 +736,7 @@ export async function getComments(cardId: string): Promise<{ id: string; userId:
  * Report a card
  */
 export async function reportCard(cardId: string, reporterId: string, reason: string, details?: string): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
 
   await db.transaction(async () => {
     await db.prepare('INSERT INTO reports (card_id, reporter_id, reason, details) VALUES (?, ?, ?, ?)').run(cardId, reporterId, reason, details || null);
@@ -754,7 +752,7 @@ export async function reportCard(cardId: string, reporterId: string, reason: str
  * Update card visibility (admin only)
  */
 export async function updateCardVisibility(cardId: string, visibility: 'public' | 'nsfw_only' | 'unlisted' | 'blocked'): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db.prepare('UPDATE cards SET visibility = ?, updated_at = unixepoch() WHERE id = ?').run(visibility, cardId);
 }
 
@@ -762,7 +760,7 @@ export async function updateCardVisibility(cardId: string, visibility: 'public' 
  * Update card moderation state (admin only)
  */
 export async function updateModerationState(cardId: string, state: 'ok' | 'review' | 'blocked'): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db.prepare('UPDATE cards SET moderation_state = ?, updated_at = unixepoch() WHERE id = ?').run(state, cardId);
 }
 

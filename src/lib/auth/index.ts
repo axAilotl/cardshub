@@ -1,4 +1,4 @@
-import { getAsyncDb } from '@/lib/db/async-db';
+import { getDatabase } from '@/lib/db/async-db';
 import { type UserRow } from '@/lib/db';
 import { nanoid } from 'nanoid';
 import { cookies } from 'next/headers';
@@ -45,7 +45,7 @@ export async function ensureAdminUser(): Promise<void> {
     return;
   }
 
-  const db = getAsyncDb();
+  const db = await getDatabase();
   const existing = await db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
 
   if (!existing) {
@@ -60,7 +60,7 @@ export async function ensureAdminUser(): Promise<void> {
 
 // Login with username and password
 export async function login(username: string, password: string): Promise<{ user: User; sessionId: string } | null> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
 
   const user = await db.prepare(`
     SELECT id, username, display_name, password_hash, is_admin
@@ -98,7 +98,7 @@ export async function login(username: string, password: string): Promise<{ user:
 
 // Logout - delete session
 export async function logout(sessionId: string): Promise<void> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
   await db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
 }
 
@@ -116,7 +116,7 @@ export async function getSession(): Promise<{ user: User; session: Session } | n
 
 // Get session by ID
 export async function getSessionById(sessionId: string): Promise<{ user: User; session: Session } | null> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
 
   const result = await db.prepare(`
     SELECT
@@ -167,7 +167,7 @@ export async function getSessionById(sessionId: string): Promise<{ user: User; s
 
 // Register a new user
 export async function register(username: string, password: string): Promise<{ user: User; sessionId: string } | { error: string }> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
 
   // Check if username exists
   const existing = await db.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -211,7 +211,7 @@ export async function loginWithOAuth(provider: string, providerId: string, profi
   displayName?: string | null;
   avatarUrl?: string | null;
 }): Promise<{ user: User; sessionId: string }> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
 
   // Check if user exists with this provider
   let user = await db.prepare(`
@@ -269,7 +269,7 @@ export async function loginWithOAuth(provider: string, providerId: string, profi
 
 // Update user password (for admin break-glass)
 export async function updatePassword(userId: string, newPassword: string): Promise<boolean> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
   const passwordHash = await hashPassword(newPassword);
 
   const result = await db.prepare(`
@@ -282,7 +282,7 @@ export async function updatePassword(userId: string, newPassword: string): Promi
 
 // Update password by username (for admin break-glass via CLI or route)
 export async function updatePasswordByUsername(username: string, newPassword: string): Promise<boolean> {
-  const db = getAsyncDb();
+  const db = await getDatabase();
   const passwordHash = await hashPassword(newPassword);
 
   const result = await db.prepare(`

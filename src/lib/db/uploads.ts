@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { createHash, randomBytes } from 'crypto';
-import { getDb } from './index';
+import { getDatabase } from './async-db';
 
 export type UploadVisibility = 'public' | 'unlisted' | 'private';
 
@@ -22,11 +22,11 @@ export interface CreateUploadInput {
   accessTokenHash?: string | null;
 }
 
-export function createUpload(input: CreateUploadInput): { id: string } {
-  const db = getDb();
+export async function createUpload(input: CreateUploadInput): Promise<{ id: string }> {
+  const db = await getDatabase();
   const id = nanoid();
 
-  db.prepare(
+  await db.prepare(
     `
     INSERT INTO uploads (id, storage_url, path, uploader_id, visibility, access_token_hash)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -43,21 +43,21 @@ export function createUpload(input: CreateUploadInput): { id: string } {
   return { id };
 }
 
-export function getUploadById(id: string): UploadRow | null {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM uploads WHERE id = ?').get(id) as UploadRow | undefined;
+export async function getUploadById(id: string): Promise<UploadRow | null> {
+  const db = await getDatabase();
+  const row = await db.prepare('SELECT * FROM uploads WHERE id = ?').get<UploadRow>(id);
   return row || null;
 }
 
-export function getUploadByPath(path: string): UploadRow | null {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM uploads WHERE path = ?').get(path) as UploadRow | undefined;
+export async function getUploadByPath(path: string): Promise<UploadRow | null> {
+  const db = await getDatabase();
+  const row = await db.prepare('SELECT * FROM uploads WHERE path = ?').get<UploadRow>(path);
   return row || null;
 }
 
-export function updateUploadVisibility(id: string, visibility: UploadVisibility, accessTokenHash: string | null): void {
-  const db = getDb();
-  db.prepare(
+export async function updateUploadVisibility(id: string, visibility: UploadVisibility, accessTokenHash: string | null): Promise<void> {
+  const db = await getDatabase();
+  await db.prepare(
     `
     UPDATE uploads
     SET visibility = ?, access_token_hash = ?
