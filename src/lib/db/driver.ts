@@ -8,7 +8,7 @@
  * All public APIs are async for compatibility.
  */
 
-import type { D1Database } from './d1';
+import type { D1Database } from '@cloudflare/workers-types';
 
 // Check if we're in Cloudflare Workers environment
 const isCloudflare = typeof globalThis !== 'undefined' &&

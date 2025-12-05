@@ -2,58 +2,60 @@
  * Cloudflare Environment Bindings
  *
  * This module provides access to Cloudflare bindings (D1, R2, etc.)
- * in both Pages and Workers environments.
+ * when running on Cloudflare Workers via OpenNext.
  */
 
-import type { D1Database } from '../db/d1';
-import type { R2Bucket } from '../storage/r2';
+import type { D1Database, R2Bucket, Fetcher, IncomingRequestCfProperties, ExecutionContext } from '@cloudflare/workers-types';
 
 // Cloudflare environment bindings
 export interface CloudflareEnv {
   DB: D1Database;
   R2: R2Bucket;
+  ASSETS: Fetcher;
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
   NEXT_PUBLIC_APP_URL?: string;
 }
 
-// Extend globalThis for Cloudflare bindings access
-declare global {
-  // eslint-disable-next-line no-var
-  var __cf_env: CloudflareEnv | undefined;
+// Type for the Cloudflare context from getCloudflareContext()
+export interface CloudflareContext {
+  env: CloudflareEnv;
+  cf: IncomingRequestCfProperties;
+  ctx: ExecutionContext;
 }
 
-/**
- * Set Cloudflare environment bindings (called by middleware)
- */
-export function setCloudflareEnv(env: CloudflareEnv): void {
-  globalThis.__cf_env = env;
-}
-
-/**
- * Get Cloudflare environment bindings
- */
-export function getCloudflareEnv(): CloudflareEnv | undefined {
-  return globalThis.__cf_env;
+// Import the official function from OpenNext
+export async function getCloudflareContext(): Promise<CloudflareContext | null> {
+  try {
+    // Dynamic import to avoid issues during build
+    const { getCloudflareContext: getCtx } = await import('@opennextjs/cloudflare');
+    return getCtx() as CloudflareContext;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Check if running in Cloudflare environment
  */
 export function isCloudflare(): boolean {
-  return globalThis.__cf_env !== undefined;
+  return typeof globalThis !== 'undefined' && 'caches' in globalThis && !process.env.DATABASE_PATH;
 }
 
 /**
- * Get D1 database binding
+ * Get D1 database from Cloudflare context
+ * Must be called from an async context (API route, etc.)
  */
-export function getD1(): D1Database | undefined {
-  return globalThis.__cf_env?.DB;
+export async function getD1(): Promise<D1Database | null> {
+  const ctx = await getCloudflareContext();
+  return ctx?.env.DB ?? null;
 }
 
 /**
- * Get R2 bucket binding
+ * Get R2 bucket from Cloudflare context
+ * Must be called from an async context (API route, etc.)
  */
-export function getR2(): R2Bucket | undefined {
-  return globalThis.__cf_env?.R2;
+export async function getR2(): Promise<R2Bucket | null> {
+  const ctx = await getCloudflareContext();
+  return ctx?.env.R2 ?? null;
 }
