@@ -26,6 +26,8 @@ bucket_name = "cardshub-uploads"
 
 [vars]
 NEXT_PUBLIC_APP_URL = "https://hub.axailotl.ai"
+DISCORD_CLIENT_ID = "1446350528568229890"
+# DISCORD_CLIENT_SECRET set via wrangler secret
 
 # Development overrides
 [env.development.vars]
