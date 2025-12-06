@@ -1,27 +1,40 @@
-import { get_encoding, type Tiktoken } from 'tiktoken';
-
-// Use cl100k_base encoding (GPT-4/3.5-turbo)
-let encoder: Tiktoken | null = null;
-
-function getEncoder(): Tiktoken {
-  if (!encoder) {
-    encoder = get_encoding('cl100k_base');
-  }
-  return encoder;
-}
+// Tiktoken is dynamically imported to avoid crashes on Cloudflare Workers
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let encoder: any = null;
+let tiktokenModule: typeof import('tiktoken') | null = null;
 
 /**
- * Count tokens in a string using tiktoken
+ * Count tokens in a string using tiktoken (or fallback estimate)
  */
 export function countTokens(text: string): number {
   if (!text || text.trim() === '') {
     return 0;
   }
 
+  // On Cloudflare Workers, tiktoken won't work - use fallback
+  if (typeof globalThis !== 'undefined' && 'caches' in globalThis && !process?.env?.DATABASE_PATH) {
+    return Math.ceil(text.length / 4);
+  }
+
   try {
-    const enc = getEncoder();
-    const tokens = enc.encode(text);
-    return tokens.length;
+    // Lazy load tiktoken on first use (Node.js only)
+    if (!tiktokenModule) {
+      // Use eval to hide from bundler
+      // eslint-disable-next-line no-eval
+      const dynamicRequire = eval('require');
+      tiktokenModule = dynamicRequire('tiktoken');
+    }
+
+    if (!encoder && tiktokenModule) {
+      encoder = tiktokenModule.get_encoding('cl100k_base');
+    }
+
+    if (encoder) {
+      const tokens = encoder.encode(text);
+      return tokens.length;
+    }
+
+    return Math.ceil(text.length / 4);
   } catch (error) {
     console.error('Error counting tokens:', error);
     // Fallback to rough estimate
@@ -54,7 +67,7 @@ export function getTotalTokens(tokens: Record<string, number>): number {
  * Call this when done with batch processing
  */
 export function freeEncoder(): void {
-  if (encoder) {
+  if (encoder && typeof encoder.free === 'function') {
     encoder.free();
     encoder = null;
   }

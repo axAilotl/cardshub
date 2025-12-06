@@ -144,17 +144,18 @@ function wrapD1(db: D1Database): AsyncDb {
 
 /**
  * Get async database for local development (better-sqlite3)
+ * This function should NEVER be called on Cloudflare Workers.
  */
 export function getAsyncDb(): AsyncDb {
   if (localDbInstance) return localDbInstance;
 
-  // Dynamic imports to avoid bundling in Cloudflare
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Database = require('better-sqlite3');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync } = require('fs');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { join } = require('path');
+  // Use eval to completely hide the require from static analysis
+  // This is the only way to prevent bundlers from including these modules
+  // eslint-disable-next-line no-eval
+  const dynamicRequire = eval('require');
+  const Database = dynamicRequire('better-sqlite3');
+  const { readFileSync } = dynamicRequire('fs');
+  const { join } = dynamicRequire('path');
 
   const dbPath = process.env.DATABASE_PATH || join(process.cwd(), 'cardshub.db');
   const db = new Database(dbPath);
