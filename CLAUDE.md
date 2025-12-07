@@ -436,6 +436,33 @@ return transformed.response();
 
 Without this, thumbnails fall back to serving original PNGs.
 
+## GitHub Packages Setup
+
+The `@character-foundry/*` packages are hosted on GitHub Packages (not npm). This requires:
+
+### Local Development
+1. `.npmrc` file in repo root (already committed):
+   ```
+   @character-foundry:registry=https://npm.pkg.github.com
+   //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+   ```
+
+2. Set `GITHUB_TOKEN` environment variable with a GitHub PAT that has `read:packages` scope
+
+3. **CRITICAL**: If you have a local clone of `character-foundry` at `../../card-ecosystem/character-foundry/`, npm will link to it instead of fetching from GitHub Packages. This creates a broken `package-lock.json` with local symlinks like:
+   ```json
+   "resolved": "../../card-ecosystem/character-foundry/packages/loader",
+   "link": true
+   ```
+
+   **To fix**: Temporarily rename/move the local `character-foundry` directory, delete `node_modules` and `package-lock.json`, then run `npm install` with `GITHUB_TOKEN` set. This forces npm to fetch from GitHub Packages and creates a proper lock file with URLs like:
+   ```json
+   "resolved": "https://npm.pkg.github.com/download/@character-foundry/loader/0.1.0/..."
+   ```
+
+### Cloudflare Build
+Set `GITHUB_TOKEN` in Cloudflare Dashboard → Workers & Pages → cardshub → Settings → Environment Variables (as a Secret for build-time).
+
 ## Known Limitations
 
 1. **D1 Transactions**: Not atomic - use `db.batch()` for critical multi-statement operations
@@ -443,3 +470,4 @@ Without this, thumbnails fall back to serving original PNGs.
 3. **Rate Limiting**: In-memory only, doesn't persist across Workers - use Cloudflare KV for production
 4. **Thumbnails on CF**: Requires Image Transformations enabled in dashboard; falls back to original if disabled
 5. **Logging on CF**: Winston not available - uses simple console logger on Workers
+6. **Package Lock Local Links**: If `package-lock.json` has local symlinks instead of GitHub URLs, Cloudflare builds will fail (see GitHub Packages Setup above)
