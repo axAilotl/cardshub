@@ -1,17 +1,13 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout';
 import { useSettings } from '@/lib/settings';
 import { useAuth } from '@/lib/auth/context';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, TagChipSelector, type TagInfo } from '@/components/ui';
 
-interface TagInfo {
-  id: number;
-  name: string;
-  slug: string;
-  category: string | null;
+interface TagInfoWithCount extends TagInfo {
   usage_count: number;
 }
 
@@ -72,8 +68,7 @@ function BannedTagsManager({
   bannedTags: string[];
   onUpdate: (tags: string[]) => void;
 }) {
-  const [allTags, setAllTags] = useState<TagInfo[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [allTags, setAllTags] = useState<TagInfoWithCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -82,8 +77,7 @@ function BannedTagsManager({
         const res = await fetch('/api/tags');
         if (res.ok) {
           const data = await res.json();
-          // Flatten the grouped tags
-          const tags: TagInfo[] = [];
+          const tags: TagInfoWithCount[] = [];
           for (const group of data) {
             tags.push(...group.tags);
           }
@@ -98,96 +92,39 @@ function BannedTagsManager({
     fetchTags();
   }, []);
 
-  // Filter tags by search term, excluding already banned tags
-  const filteredTags = useMemo(() => {
-    if (!searchTerm.trim()) return [];
-    const term = searchTerm.toLowerCase();
-    return allTags
-      .filter(tag =>
-        !bannedTags.includes(tag.slug) &&
-        (tag.name.toLowerCase().includes(term) || tag.slug.includes(term))
-      )
-      .slice(0, 10);
-  }, [allTags, searchTerm, bannedTags]);
-
-  // Get display names for banned tags
-  const bannedTagsWithNames = useMemo(() => {
+  // Convert slug-based banned tags to TagInfo objects
+  const selectedTags = useMemo(() => {
     return bannedTags.map(slug => {
       const tag = allTags.find(t => t.slug === slug);
-      return { slug, name: tag?.name || slug };
-    });
+      return tag || { id: 0, name: slug, slug, category: null };
+    }).filter(t => t.id !== 0 || allTags.length === 0);
   }, [bannedTags, allTags]);
 
-  const addTag = (slug: string) => {
-    if (!bannedTags.includes(slug)) {
-      onUpdate([...bannedTags, slug]);
+  const handleAdd = useCallback((tag: TagInfo) => {
+    if (!bannedTags.includes(tag.slug)) {
+      onUpdate([...bannedTags, tag.slug]);
     }
-    setSearchTerm('');
-  };
+  }, [bannedTags, onUpdate]);
 
-  const removeTag = (slug: string) => {
-    onUpdate(bannedTags.filter(t => t !== slug));
-  };
+  const handleRemove = useCallback((tagId: number) => {
+    const tag = allTags.find(t => t.id === tagId);
+    if (tag) {
+      onUpdate(bannedTags.filter(slug => slug !== tag.slug));
+    }
+  }, [allTags, bannedTags, onUpdate]);
 
   return (
-    <div className="space-y-4">
-      <div>
-        <div className="font-medium text-starlight mb-1">Hidden Tags</div>
-        <div className="text-sm text-starlight/60 mb-3">
-          Cards with these tags will be hidden from the explore page
-        </div>
-      </div>
-
-      {/* Search input */}
-      <div className="relative">
-        <Input
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search tags to hide..."
-          disabled={isLoading}
-        />
-        {/* Dropdown with filtered tags */}
-        {filteredTags.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-cosmic-teal border border-nebula/30 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
-            {filteredTags.map(tag => (
-              <button
-                key={tag.slug}
-                onClick={() => addTag(tag.slug)}
-                className="w-full px-3 py-2 text-left text-sm text-starlight hover:bg-nebula/20 flex items-center justify-between"
-              >
-                <span>{tag.name}</span>
-                <span className="text-starlight/40 text-xs">{tag.usage_count} uses</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* List of banned tags */}
-      {bannedTagsWithNames.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {bannedTagsWithNames.map(tag => (
-            <span
-              key={tag.slug}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/20 text-red-400 text-sm"
-            >
-              {tag.name}
-              <button
-                onClick={() => removeTag(tag.slug)}
-                className="hover:text-red-300 transition-colors"
-                title="Remove"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-starlight/40 italic">No tags hidden</p>
-      )}
-    </div>
+    <TagChipSelector
+      label="Hidden Tags"
+      description="Cards with these tags will be hidden from the explore page"
+      selectedTags={selectedTags}
+      availableTags={allTags}
+      onAdd={handleAdd}
+      onRemove={handleRemove}
+      variant="red"
+      placeholder="Search tags to hide..."
+      isLoading={isLoading}
+    />
   );
 }
 
@@ -199,28 +136,28 @@ interface TagPreference {
 }
 
 function TagPreferencesManager() {
-  const [allTags, setAllTags] = useState<TagInfo[]>([]);
+  const [allTags, setAllTags] = useState<TagInfoWithCount[]>([]);
   const [preferences, setPreferences] = useState<TagPreference[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        // Fetch all tags
-        const tagsRes = await fetch('/api/tags');
+        const [tagsRes, prefsRes] = await Promise.all([
+          fetch('/api/tags'),
+          fetch('/api/users/me/tags'),
+        ]);
+
         if (tagsRes.ok) {
           const data = await tagsRes.json();
-          const tags: TagInfo[] = [];
+          const tags: TagInfoWithCount[] = [];
           for (const group of data) {
             tags.push(...group.tags);
           }
           setAllTags(tags);
         }
 
-        // Fetch user's tag preferences
-        const prefsRes = await fetch('/api/users/me/tags');
         if (prefsRes.ok) {
           const data = await prefsRes.json();
           setPreferences(data.preferences || []);
@@ -234,30 +171,35 @@ function TagPreferencesManager() {
     fetchData();
   }, []);
 
+  // Convert preferences to TagInfo arrays for the selectors
   const followedTags = useMemo(() =>
-    preferences.filter(p => p.preference === 'follow'),
+    preferences
+      .filter(p => p.preference === 'follow')
+      .map(p => ({ id: p.tagId, name: p.tagName, slug: p.tagSlug, category: null })),
     [preferences]
   );
 
   const blockedTags = useMemo(() =>
-    preferences.filter(p => p.preference === 'block'),
+    preferences
+      .filter(p => p.preference === 'block')
+      .map(p => ({ id: p.tagId, name: p.tagName, slug: p.tagSlug, category: null })),
     [preferences]
   );
 
-  // Filter tags by search term, excluding already preferenced tags
-  const filteredTags = useMemo(() => {
-    if (!searchTerm.trim()) return [];
-    const term = searchTerm.toLowerCase();
-    const existingTagIds = new Set(preferences.map(p => p.tagId));
-    return allTags
-      .filter(tag =>
-        !existingTagIds.has(tag.id) &&
-        (tag.name.toLowerCase().includes(term) || tag.slug.includes(term))
-      )
-      .slice(0, 10);
-  }, [allTags, searchTerm, preferences]);
+  // Available tags excluding already preferenced ones
+  const availableForFollow = useMemo(() => {
+    const blockedIds = new Set(blockedTags.map(t => t.id));
+    const followedIds = new Set(followedTags.map(t => t.id));
+    return allTags.filter(t => !blockedIds.has(t.id) && !followedIds.has(t.id));
+  }, [allTags, blockedTags, followedTags]);
 
-  const updatePreference = async (tagId: number, tagName: string, tagSlug: string, preference: 'follow' | 'block' | null) => {
+  const availableForBlock = useMemo(() => {
+    const blockedIds = new Set(blockedTags.map(t => t.id));
+    const followedIds = new Set(followedTags.map(t => t.id));
+    return allTags.filter(t => !blockedIds.has(t.id) && !followedIds.has(t.id));
+  }, [allTags, blockedTags, followedTags]);
+
+  const updatePreference = useCallback(async (tagId: number, tagName: string, tagSlug: string, preference: 'follow' | 'block' | null) => {
     setIsSaving(true);
     try {
       const res = await fetch('/api/users/me/tags', {
@@ -284,120 +226,58 @@ function TagPreferencesManager() {
       console.error('Error updating preference:', err);
     } finally {
       setIsSaving(false);
-      setSearchTerm('');
     }
-  };
+  }, [preferences]);
+
+  const handleFollowAdd = useCallback((tag: TagInfo) => {
+    updatePreference(tag.id, tag.name, tag.slug, 'follow');
+  }, [updatePreference]);
+
+  const handleFollowRemove = useCallback((tagId: number) => {
+    const pref = preferences.find(p => p.tagId === tagId);
+    if (pref) {
+      updatePreference(tagId, pref.tagName, pref.tagSlug, null);
+    }
+  }, [preferences, updatePreference]);
+
+  const handleBlockAdd = useCallback((tag: TagInfo) => {
+    updatePreference(tag.id, tag.name, tag.slug, 'block');
+  }, [updatePreference]);
+
+  const handleBlockRemove = useCallback((tagId: number) => {
+    const pref = preferences.find(p => p.tagId === tagId);
+    if (pref) {
+      updatePreference(tagId, pref.tagName, pref.tagSlug, null);
+    }
+  }, [preferences, updatePreference]);
 
   return (
-    <div className="space-y-6">
-      {/* Follow tags */}
-      <div>
-        <div className="font-medium text-starlight mb-1 flex items-center gap-2">
-          <span className="text-green-400">+</span> Followed Tags
-        </div>
-        <div className="text-sm text-starlight/60 mb-3">
-          Cards with these tags will appear in your feed
-        </div>
-        {followedTags.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {followedTags.map(pref => (
-              <span
-                key={pref.tagId}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 text-green-400 text-sm"
-              >
-                {pref.tagName}
-                <button
-                  onClick={() => updatePreference(pref.tagId, pref.tagName, pref.tagSlug, null)}
-                  disabled={isSaving}
-                  className="hover:text-green-300 transition-colors"
-                  title="Unfollow"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-starlight/40 italic">No tags followed</p>
-        )}
-      </div>
+    <div className="space-y-8">
+      <TagChipSelector
+        label="Followed Tags"
+        description="Cards with these tags will appear in your personalized feed"
+        selectedTags={followedTags}
+        availableTags={availableForFollow}
+        onAdd={handleFollowAdd}
+        onRemove={handleFollowRemove}
+        variant="green"
+        placeholder="Search tags to follow..."
+        disabled={isSaving}
+        isLoading={isLoading}
+      />
 
-      {/* Block tags */}
-      <div>
-        <div className="font-medium text-starlight mb-1 flex items-center gap-2">
-          <span className="text-red-400">-</span> Blocked Tags
-        </div>
-        <div className="text-sm text-starlight/60 mb-3">
-          Cards with these tags will be hidden from your feed
-        </div>
-        {blockedTags.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {blockedTags.map(pref => (
-              <span
-                key={pref.tagId}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/20 text-red-400 text-sm"
-              >
-                {pref.tagName}
-                <button
-                  onClick={() => updatePreference(pref.tagId, pref.tagName, pref.tagSlug, null)}
-                  disabled={isSaving}
-                  className="hover:text-red-300 transition-colors"
-                  title="Unblock"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-starlight/40 italic">No tags blocked</p>
-        )}
-      </div>
-
-      {/* Search and add */}
-      <div>
-        <div className="font-medium text-starlight mb-2">Add Tag Preference</div>
-        <div className="relative">
-          <Input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search tags..."
-            disabled={isLoading}
-          />
-          {filteredTags.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-cosmic-teal border border-nebula/30 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
-              {filteredTags.map(tag => (
-                <div
-                  key={tag.slug}
-                  className="flex items-center justify-between px-3 py-2 text-sm text-starlight hover:bg-nebula/10"
-                >
-                  <span>{tag.name}</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => updatePreference(tag.id, tag.name, tag.slug, 'follow')}
-                      disabled={isSaving}
-                      className="px-2 py-1 text-xs rounded bg-green-500/20 text-green-400 hover:bg-green-500/30"
-                    >
-                      Follow
-                    </button>
-                    <button
-                      onClick={() => updatePreference(tag.id, tag.name, tag.slug, 'block')}
-                      disabled={isSaving}
-                      className="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                    >
-                      Block
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <TagChipSelector
+        label="Blocked Tags"
+        description="Cards with these tags will be hidden from your feed"
+        selectedTags={blockedTags}
+        availableTags={availableForBlock}
+        onAdd={handleBlockAdd}
+        onRemove={handleBlockRemove}
+        variant="red"
+        placeholder="Search tags to block..."
+        disabled={isSaving}
+        isLoading={isLoading}
+      />
     </div>
   );
 }
@@ -507,7 +387,13 @@ export default function SettingsPage() {
                     href={`/user/${profile.username}`}
                     className="px-3 py-2 text-sm text-nebula hover:underline"
                   >
-                    View Profile
+                    View
+                  </Link>
+                  <Link
+                    href="/settings/profile"
+                    className="px-3 py-2 text-sm bg-nebula/20 text-nebula rounded hover:bg-nebula/30"
+                  >
+                    Edit Profile
                   </Link>
                 </div>
                 <p className="text-xs text-starlight/50 mt-1">Username cannot be changed</p>

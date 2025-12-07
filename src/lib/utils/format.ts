@@ -29,7 +29,13 @@ export function formatCount(count: number): string {
 
 /**
  * Strip HTML tags from a string
+ * Also removes style/script tags with their content
  */
 export function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').trim();
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '') // Remove style tags with content
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Remove script tags with content
+    .replace(/<[^>]*>/g, '') // Remove remaining HTML tags
+    .replace(/\s+/g, ' ') // Collapse whitespace
+    .trim();
 }

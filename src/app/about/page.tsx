@@ -1,8 +1,38 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui';
 
+interface PlatformStats {
+  totalCards: number;
+  totalUsers: number;
+  totalDownloads: number;
+  totalCreators: number;
+}
+
+function StatCounter({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="text-center">
+      <div className="text-4xl md:text-5xl font-bold gradient-text mb-2">
+        {value.toLocaleString()}
+      </div>
+      <div className="text-starlight/60 text-sm uppercase tracking-wide">{label}</div>
+    </div>
+  );
+}
+
 export default function AboutPage() {
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+
+  useEffect(() => {
+    fetch('/api/stats')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setStats(data))
+      .catch(() => {});
+  }, []);
+
   return (
     <AppShell>
       <div className="max-w-4xl mx-auto text-center py-12">
@@ -17,6 +47,16 @@ export default function AboutPage() {
           Upload, explore, and download character cards for your favorite AI platforms.
           Support for CCv2 and CCv3 formats with automatic token counting and metadata extraction.
         </p>
+
+        {/* Stats counters */}
+        {stats && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12 glass rounded-xl p-6">
+            <StatCounter value={stats.totalCards} label="Characters" />
+            <StatCounter value={stats.totalCreators} label="Creators" />
+            <StatCounter value={stats.totalDownloads} label="Downloads" />
+            <StatCounter value={stats.totalUsers} label="Users" />
+          </div>
+        )}
 
         {/* CTA buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">

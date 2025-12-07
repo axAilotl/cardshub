@@ -91,9 +91,10 @@ src/
 │   ├── upload/             # Card upload page (with visibility selector)
 │   ├── login/              # Login/register page
 │   ├── settings/           # User settings page (with tag preferences)
+│   │   └── profile/        # Edit profile page with live preview
 │   └── page.tsx            # Landing page (Feed with sort controls)
 ├── components/
-│   ├── ui/                 # Base components (Button, Input, Modal, Badge)
+│   ├── ui/                 # Base components (Button, Input, Modal, Badge, TagChipSelector)
 │   ├── layout/             # AppShell, Header, Sidebar, UserDropdown
 │   ├── cards/              # CardGrid, CardItem, CardFilters, CardModal
 │   └── feed/               # FeedSortControls
@@ -251,6 +252,11 @@ SQLite database (`cardshub.db`) with tables:
 |--------|----------|------|-------------|
 | GET | /api/search | No | Full-text search with BM25 ranking and snippets |
 | GET | /api/tags | No | List all tags grouped by category (cached 60s) |
+
+**Stats**
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /api/stats | No | Public platform stats (cards, users, downloads, creators) - cached 5 min |
 
 **Users**
 | Method | Endpoint | Auth | Description |

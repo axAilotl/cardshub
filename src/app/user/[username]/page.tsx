@@ -264,7 +264,7 @@ export default function UserProfilePage() {
             <div className="flex flex-col gap-2">
               {isOwnProfile ? (
                 <Link
-                  href="/settings"
+                  href="/settings/profile"
                   className="px-4 py-2 bg-nebula/20 hover:bg-nebula/30 text-starlight rounded-lg transition-colors text-center"
                 >
                   Edit Profile
