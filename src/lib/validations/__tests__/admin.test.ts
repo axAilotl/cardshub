@@ -14,7 +14,7 @@ import {
 
 describe('UpdateVisibilitySchema', () => {
   it('accepts valid visibility states', () => {
-    const states = ['public', 'nsfw_only', 'unlisted', 'blocked'];
+    const states = ['public', 'private', 'nsfw_only', 'unlisted', 'blocked'];
     for (const visibility of states) {
       const result = UpdateVisibilitySchema.safeParse({ visibility });
       expect(result.success).toBe(true);
@@ -22,8 +22,8 @@ describe('UpdateVisibilitySchema', () => {
   });
 
   it('rejects invalid visibility state', () => {
-    expect(UpdateVisibilitySchema.safeParse({ visibility: 'private' }).success).toBe(false);
     expect(UpdateVisibilitySchema.safeParse({ visibility: 'hidden' }).success).toBe(false);
+    expect(UpdateVisibilitySchema.safeParse({ visibility: 'draft' }).success).toBe(false);
   });
 
   it('requires visibility field', () => {
@@ -156,7 +156,7 @@ describe('UpdateReportStatusSchema', () => {
 
 describe('AdminVisibilityFilterSchema', () => {
   it('accepts all visibility states including all', () => {
-    const values = ['public', 'nsfw_only', 'unlisted', 'blocked', 'all'];
+    const values = ['public', 'private', 'nsfw_only', 'unlisted', 'blocked', 'all'];
     for (const value of values) {
       const result = AdminVisibilityFilterSchema.safeParse(value);
       expect(result.success).toBe(true);
@@ -164,7 +164,8 @@ describe('AdminVisibilityFilterSchema', () => {
   });
 
   it('rejects invalid values', () => {
-    expect(AdminVisibilityFilterSchema.safeParse('private').success).toBe(false);
+    expect(AdminVisibilityFilterSchema.safeParse('hidden').success).toBe(false);
+    expect(AdminVisibilityFilterSchema.safeParse('draft').success).toBe(false);
   });
 });
 

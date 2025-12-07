@@ -24,6 +24,7 @@ export const CardSortSchema = z.enum([
 // Visibility states
 export const VisibilitySchema = z.enum([
   'public',
+  'private',
   'nsfw_only',
   'unlisted',
   'blocked',
@@ -31,6 +32,7 @@ export const VisibilitySchema = z.enum([
 
 export const UploadVisibilitySchema = z.enum([
   'public',
+  'private',
   'nsfw_only',
   'unlisted',
 ]);

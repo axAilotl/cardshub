@@ -21,6 +21,11 @@ export async function GET(
     const db = await getDatabase();
     const offset = (page - 1) * limit;
 
+    // Get session to check if viewer is viewing their own profile
+    const session = await getSession();
+    const viewerId = session?.user?.id;
+    const isAdmin = session?.user?.isAdmin ?? false;
+
     // Get user by username
     const user = await db.prepare('SELECT id FROM users WHERE username = ?').get<{ id: string }>(username);
 
@@ -30,6 +35,9 @@ export async function GET(
         { status: 404 }
       );
     }
+
+    // Owner can see all their cards (including private/unlisted)
+    const isOwner = viewerId === user.id;
 
     // Sort order
     let orderBy: string;
@@ -48,11 +56,23 @@ export async function GET(
         orderBy = 'c.created_at DESC';
     }
 
+    // Determine visible visibility states
+    // Owner or admin: all except blocked (unless admin)
+    // Others: only public, nsfw_only
+    let visibilityCondition: string;
+    if (isOwner || isAdmin) {
+      visibilityCondition = isAdmin
+        ? `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted', 'blocked')`
+        : `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted')`;
+    } else {
+      visibilityCondition = `c.visibility IN ('public', 'nsfw_only')`;
+    }
+
     // Count total
     const totalResult = await db.prepare(`
       SELECT COUNT(*) as total FROM cards c
       WHERE c.uploader_id = ?
-        AND c.visibility IN ('public', 'nsfw_only')
+        AND ${visibilityCondition}
         AND c.moderation_state != 'blocked'
     `).get<{ total: number }>(user.id);
 
@@ -72,7 +92,7 @@ export async function GET(
       FROM cards c
       LEFT JOIN card_versions v ON c.head_version_id = v.id
       WHERE c.uploader_id = ?
-        AND c.visibility IN ('public', 'nsfw_only')
+        AND ${visibilityCondition}
         AND c.moderation_state != 'blocked'
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
@@ -109,9 +129,7 @@ export async function GET(
       thumbnail_path: string | null;
     }>(user.id, limit, offset);
 
-    // Get session to check viewer's favorites
-    const session = await getSession();
-    const viewerId = session?.user?.id;
+    // Get viewer's favorites for these cards (already have viewerId from above)
 
     // Get tags for cards
     const cardIds = rows.map(r => r.id);

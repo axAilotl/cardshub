@@ -156,8 +156,9 @@ export async function createCard(input): Promise<{ cardId, versionId }>
 ### Visibility States
 ```
 public      → visible to everyone
+private     → owner only (and admins), not in browse/search/feed
 nsfw_only   → visible only with NSFW filter enabled
-unlisted    → direct link only, not in search/browse
+unlisted    → direct link only, not in search/browse/feed
 blocked     → admin removed, only admins see
 ```
 

@@ -7,6 +7,31 @@ interface RouteParams {
 }
 
 /**
+ * Check if user can view a card based on visibility
+ */
+function canViewCard(
+  card: { visibility: string; uploader?: { id: string } | null },
+  userId?: string,
+  isAdmin?: boolean
+): boolean {
+  // Admins can see everything
+  if (isAdmin) return true;
+
+  // Private cards: owner only
+  if (card.visibility === 'private') {
+    return !!userId && card.uploader?.id === userId;
+  }
+
+  // Blocked cards: admins only (already handled above)
+  if (card.visibility === 'blocked') {
+    return false;
+  }
+
+  // Public, unlisted, nsfw_only: visible to all (unlisted just excluded from browse)
+  return true;
+}
+
+/**
  * GET /api/cards/[slug]
  * Get a single card by slug
  */
@@ -22,9 +47,26 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Check visibility permissions
+    const session = await getSession();
+    const userId = session?.user.id;
+    const isAdmin = session?.user.isAdmin ?? false;
+
+    if (!canViewCard(card, userId, isAdmin)) {
+      return NextResponse.json(
+        { error: 'Card not found' },
+        { status: 404 }
+      );
+    }
+
+    // Private cards should not be cached publicly
+    const cacheControl = card.visibility === 'private'
+      ? 'private, no-store'
+      : 'public, s-maxage=300, stale-while-revalidate=60';
+
     return NextResponse.json(card, {
       headers: {
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
+        'Cache-Control': cacheControl,
       },
     });
   } catch (error) {

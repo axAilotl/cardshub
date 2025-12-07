@@ -38,6 +38,7 @@ export type UpdateReportStatusInput = z.infer<typeof UpdateReportStatusSchema>;
 // Admin cards filter - extends visibility/moderation with 'all' option
 export const AdminVisibilityFilterSchema = z.enum([
   'public',
+  'private',
   'nsfw_only',
   'unlisted',
   'blocked',

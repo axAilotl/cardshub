@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
     const visibilityValidation = UploadVisibilitySchema.safeParse(visibilityRaw || 'public');
     if (!visibilityValidation.success) {
       return NextResponse.json(
-        { error: `Invalid visibility. Must be one of: public, nsfw_only, unlisted` },
+        { error: `Invalid visibility. Must be one of: public, private, nsfw_only, unlisted` },
         { status: 400 }
       );
     }
@@ -397,7 +397,7 @@ export async function POST(request: NextRequest) {
       creator: parsedCard.creator || null,
       creatorNotes: parsedCard.creatorNotes || null,
       uploaderId: session.user.id,
-      visibility: visibility as 'public' | 'nsfw_only' | 'unlisted',
+      visibility: visibility as 'public' | 'private' | 'nsfw_only' | 'unlisted',
       tagSlugs: allTags,
       version: {
         storageUrl,

@@ -78,7 +78,7 @@ describe('CardSortSchema', () => {
 
 describe('VisibilitySchema', () => {
   it('accepts all valid visibility states', () => {
-    const validStates = ['public', 'nsfw_only', 'unlisted', 'blocked'];
+    const validStates = ['public', 'private', 'nsfw_only', 'unlisted', 'blocked'];
     for (const state of validStates) {
       const result = VisibilitySchema.safeParse(state);
       expect(result.success).toBe(true);
@@ -86,14 +86,15 @@ describe('VisibilitySchema', () => {
   });
 
   it('rejects invalid visibility state', () => {
-    expect(VisibilitySchema.safeParse('private').success).toBe(false);
     expect(VisibilitySchema.safeParse('hidden').success).toBe(false);
+    expect(VisibilitySchema.safeParse('draft').success).toBe(false);
   });
 });
 
 describe('UploadVisibilitySchema', () => {
   it('accepts upload visibility options (excludes blocked)', () => {
     expect(UploadVisibilitySchema.safeParse('public').success).toBe(true);
+    expect(UploadVisibilitySchema.safeParse('private').success).toBe(true);
     expect(UploadVisibilitySchema.safeParse('nsfw_only').success).toBe(true);
     expect(UploadVisibilitySchema.safeParse('unlisted').success).toBe(true);
   });

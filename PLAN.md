@@ -182,12 +182,20 @@
 - [ ] *CSS class documentation* - Document available classes for profile customization
 - [ ] *Future: CodeMirror profile editor tool*
 
-### v1.2 - Privacy Controls
+### v1.2 - Privacy Controls ✅
 *Enhanced card visibility options*
 
-- [ ] **Private visibility** - Cards visible only to owner (distinct from blocked)
-- [ ] **Unlisted visibility** - Cards accessible via direct link only, not in search/browse
-- [ ] Visibility states: `public` | `private` | `unlisted` | `nsfw_only` | `blocked`
+- [x] **Private visibility** - Cards visible only to owner (distinct from blocked)
+- [x] **Unlisted visibility** - Cards accessible via direct link only, not in search/browse
+- [x] Visibility states: `public` | `private` | `unlisted` | `nsfw_only` | `blocked`
+
+**Implementation details:**
+- Card detail API (`/api/cards/[slug]`) enforces visibility permissions
+- Private cards: owner-only access (admins can also view)
+- Unlisted cards: visible via direct link but excluded from browse/search/feed
+- Download API enforces same visibility rules
+- User profile shows owner's private/unlisted cards only when viewing own profile
+- Admin cards filter includes private visibility option
 
 ### v1.3 - Content Safety UX
 *Better NSFW handling*

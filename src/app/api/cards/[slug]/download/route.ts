@@ -4,10 +4,36 @@ import { isCloudflareRuntime } from '@/lib/db';
 import { getR2 } from '@/lib/cloudflare/env';
 import { embedIntoPNG } from '@character-foundry/png';
 import { toUint8Array } from '@character-foundry/core';
+import { getSession } from '@/lib/auth';
 import type { CCv2Data, CCv3Data } from '@character-foundry/schemas';
 
 interface RouteParams {
   params: Promise<{ slug: string }>;
+}
+
+/**
+ * Check if user can download a card based on visibility
+ */
+function canDownloadCard(
+  card: { visibility: string; uploader?: { id: string } | null },
+  userId?: string,
+  isAdmin?: boolean
+): boolean {
+  // Admins can download everything
+  if (isAdmin) return true;
+
+  // Private cards: owner only
+  if (card.visibility === 'private') {
+    return !!userId && card.uploader?.id === userId;
+  }
+
+  // Blocked cards: admins only (already handled above)
+  if (card.visibility === 'blocked') {
+    return false;
+  }
+
+  // Public, unlisted, nsfw_only: anyone can download (unlisted just hidden from browse)
+  return true;
 }
 
 /**
@@ -46,6 +72,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const card = await getCardBySlug(slug);
 
     if (!card) {
+      return NextResponse.json(
+        { error: 'Card not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check visibility permissions
+    const session = await getSession();
+    const userId = session?.user.id;
+    const isAdmin = session?.user.isAdmin ?? false;
+
+    if (!canDownloadCard(card, userId, isAdmin)) {
       return NextResponse.json(
         { error: 'Card not found' },
         { status: 404 }

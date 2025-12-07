@@ -364,7 +364,7 @@ export interface CreateCardInput {
   creator: string | null;
   creatorNotes: string | null;
   uploaderId: string | null;
-  visibility?: 'public' | 'nsfw_only' | 'unlisted';
+  visibility?: 'public' | 'private' | 'nsfw_only' | 'unlisted';
   tagSlugs: string[];
   version: {
     storageUrl: string;
