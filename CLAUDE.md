@@ -82,17 +82,21 @@ src/
 │   ├── api/tags/           # Tags listing (cached 60s)
 │   ├── api/uploads/        # Static file serving with visibility enforcement
 │   ├── admin/              # Admin panel pages (dashboard, cards, reports, users)
-│   ├── explore/            # Main grid view with filtering
-│   ├── feed/               # Personalized feed page
+│   ├── explore/            # Grid view with tag filtering
+│   ├── feed/               # Alternate feed page (same as landing)
+│   ├── my-cards/           # User's uploaded cards management
+│   ├── about/              # About page (platform info)
 │   ├── card/[slug]/        # Card detail page
 │   ├── user/[username]/    # User profile page
 │   ├── upload/             # Card upload page (with visibility selector)
 │   ├── login/              # Login/register page
-│   └── settings/           # User settings page (with tag preferences)
+│   ├── settings/           # User settings page (with tag preferences)
+│   └── page.tsx            # Landing page (Feed with sort controls)
 ├── components/
 │   ├── ui/                 # Base components (Button, Input, Modal, Badge)
-│   ├── layout/             # AppShell, Header, Sidebar
-│   └── cards/              # CardGrid, CardItem, CardFilters, CardModal
+│   ├── layout/             # AppShell, Header, Sidebar, UserDropdown
+│   ├── cards/              # CardGrid, CardItem, CardFilters, CardModal
+│   └── feed/               # FeedSortControls
 ├── lib/
 │   ├── auth/               # Authentication (bcrypt, sessions, context)
 │   ├── db/                 # Database abstraction layer
@@ -105,7 +109,7 @@ src/
 │   │   ├── index.ts        # Driver registry
 │   │   ├── file.ts         # Local filesystem driver
 │   │   └── r2.ts           # Cloudflare R2 driver
-│   ├── card-architect/     # Multi-format card parsing (PNG, JSON, CharX, Voxta)
+│   ├── character-foundry/  # Multi-format card parsing (PNG, JSON, CharX, Voxta)
 │   ├── card-parser/        # Token counting and metadata extraction
 │   ├── image/              # Thumbnail generation
 │   ├── validations/        # Zod schemas for API input validation
@@ -165,7 +169,7 @@ blocked     → admin removed, only admins see
 ```
 
 ### Character Card Parsing
-The `lib/card-architect/` module handles:
+The `lib/character-foundry/` module handles:
 - PNG tEXt chunk extraction (base64-encoded JSON in "chara" field)
 - CCv2 spec parsing (`chara_card_v2`)
 - CCv3 spec parsing (`chara_card_v3`) with assets support
@@ -266,7 +270,7 @@ SQLite database (`cardshub.db`) with tables:
 **Feed**
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | /api/feed | No | Personalized feed (followed users + tags + trending, blocked tag filtering) |
+| GET | /api/feed | No | Feed with sort options: `sort` (for_you/newest/modified/upvotes/downloads/favorites), `order` (asc/desc) |
 
 **Auth**
 | Method | Endpoint | Auth | Description |
