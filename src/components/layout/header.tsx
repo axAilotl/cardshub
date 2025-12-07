@@ -3,8 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui';
-import { useAuth } from '@/lib/auth/context';
+import { UserDropdown } from './user-dropdown';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -13,12 +12,6 @@ interface HeaderProps {
 export function Header({ onMenuClick }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
-  const { user, logout } = useAuth();
-
-  const handleLogout = async () => {
-    await logout();
-    router.refresh();
-  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,27 +70,9 @@ export function Header({ onMenuClick }: HeaderProps) {
           </div>
         </form>
 
-        {/* Right side - User actions */}
-        <div className="flex items-center gap-3">
-          {user ? (
-            <>
-              <span className="text-sm text-starlight/70 hidden sm:inline">
-                {user.username}
-                {user.isAdmin && (
-                  <span className="ml-1 text-xs text-nebula">(admin)</span>
-                )}
-              </span>
-              <Button variant="outline" size="sm" onClick={handleLogout}>
-                Logout
-              </Button>
-            </>
-          ) : (
-            <Link href="/login">
-              <Button variant="outline" size="sm">
-                Login
-              </Button>
-            </Link>
-          )}
+        {/* Right side - User dropdown */}
+        <div className="flex items-center">
+          <UserDropdown />
         </div>
       </div>
     </header>

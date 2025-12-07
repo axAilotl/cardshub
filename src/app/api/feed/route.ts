@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
 import { getSession } from '@/lib/auth';
 
+type SortOption = 'for_you' | 'newest' | 'modified' | 'upvotes' | 'downloads' | 'favorites';
+type SortOrder = 'asc' | 'desc';
+
 interface FeedCard {
   id: string;
   slug: string;
@@ -11,7 +14,9 @@ interface FeedCard {
   thumbnailPath: string | null;
   upvotes: number;
   downloadsCount: number;
+  favoritesCount: number;
   createdAt: number;
+  modifiedAt: number;
   reason: 'followed_user' | 'followed_tag' | 'trending';
   uploader: {
     id: string;
@@ -21,25 +26,46 @@ interface FeedCard {
   } | null;
 }
 
+// Map sort options to SQL columns
+const sortColumns: Record<SortOption, string> = {
+  for_you: 'c.created_at', // Not actually used for for_you
+  newest: 'c.created_at',
+  modified: 'c.updated_at',
+  upvotes: 'c.upvotes',
+  downloads: 'c.downloads_count',
+  favorites: 'c.favorites_count',
+};
+
 /**
  * GET /api/feed
  * Get personalized feed for current user
  * Query params:
  *  - page: number (default 1)
  *  - limit: number (default 24, max 50)
+ *  - sort: for_you | newest | modified | upvotes | downloads | favorites (default: newest)
+ *  - order: asc | desc (default: desc)
  */
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session) {
-      // Return trending cards for non-authenticated users
-      return getTrendingFeed(request);
-    }
-
     const { searchParams } = request.nextUrl;
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
     const offset = (page - 1) * limit;
+    const sort = (searchParams.get('sort') || 'newest') as SortOption;
+    const order = (searchParams.get('order') || 'desc') as SortOrder;
+
+    // Validate sort option
+    if (!sortColumns[sort]) {
+      return NextResponse.json({ error: 'Invalid sort option' }, { status: 400 });
+    }
+
+    // Non-authenticated or non-personalized sort
+    if (!session || sort !== 'for_you') {
+      return getSortedFeed(request, session?.user?.id || null, sort, order, page, limit, offset);
+    }
+
+    // For authenticated users with "for_you" sort, use personalized feed
 
     const db = await getDatabase();
     const userId = session.user.id;
@@ -63,7 +89,8 @@ export async function GET(request: NextRequest) {
     const followedUserCards = await db.prepare(`
       SELECT
         c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.created_at,
+        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
+        c.created_at, c.updated_at,
         u.id as uploader_id, u.username, u.display_name, u.avatar_url,
         'followed_user' as reason
       FROM cards c
@@ -86,7 +113,9 @@ export async function GET(request: NextRequest) {
       thumbnail_path: string | null;
       upvotes: number;
       downloads_count: number;
+      favorites_count: number;
       created_at: number;
+      updated_at: number;
       uploader_id: string | null;
       username: string | null;
       display_name: string | null;
@@ -98,7 +127,8 @@ export async function GET(request: NextRequest) {
     const followedTagCards = await db.prepare(`
       SELECT DISTINCT
         c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.created_at,
+        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
+        c.created_at, c.updated_at,
         u.id as uploader_id, u.username, u.display_name, u.avatar_url,
         'followed_tag' as reason
       FROM cards c
@@ -122,7 +152,9 @@ export async function GET(request: NextRequest) {
       thumbnail_path: string | null;
       upvotes: number;
       downloads_count: number;
+      favorites_count: number;
       created_at: number;
+      updated_at: number;
       uploader_id: string | null;
       username: string | null;
       display_name: string | null;
@@ -134,7 +166,8 @@ export async function GET(request: NextRequest) {
     const trendingCards = await db.prepare(`
       SELECT
         c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.created_at,
+        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
+        c.created_at, c.updated_at,
         u.id as uploader_id, u.username, u.display_name, u.avatar_url,
         'trending' as reason
       FROM cards c
@@ -154,7 +187,9 @@ export async function GET(request: NextRequest) {
       thumbnail_path: string | null;
       upvotes: number;
       downloads_count: number;
+      favorites_count: number;
       created_at: number;
+      updated_at: number;
       uploader_id: string | null;
       username: string | null;
       display_name: string | null;
@@ -175,7 +210,9 @@ export async function GET(request: NextRequest) {
       thumbnailPath: row.thumbnail_path,
       upvotes: row.upvotes,
       downloadsCount: row.downloads_count,
+      favoritesCount: row.favorites_count,
       createdAt: row.created_at,
+      modifiedAt: row.updated_at,
       reason: row.reason as FeedCard['reason'],
       uploader: row.uploader_id ? {
         id: row.uploader_id,
@@ -243,29 +280,54 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Fallback feed for non-authenticated users (trending/recent)
+ * Sorted feed with optional blocked tag filtering for authenticated users
  */
-async function getTrendingFeed(request: NextRequest) {
+async function getSortedFeed(
+  request: NextRequest,
+  userId: string | null,
+  sort: SortOption,
+  order: SortOrder,
+  page: number,
+  limit: number,
+  offset: number
+) {
   try {
-    const { searchParams } = request.nextUrl;
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
-    const offset = (page - 1) * limit;
-
     const db = await getDatabase();
 
-    // Get trending cards
+    // Get blocked tags for filtering (if authenticated)
+    let blockedTagCondition = '';
+    if (userId) {
+      const blockedTags = await db.prepare(`
+        SELECT tag_id FROM tag_preferences
+        WHERE user_id = ? AND preference = 'block'
+      `).all<{ tag_id: number }>(userId);
+      const blockedTagIds = blockedTags.map(t => t.tag_id);
+
+      if (blockedTagIds.length > 0) {
+        blockedTagCondition = `AND c.id NOT IN (
+          SELECT ct.card_id FROM card_tags ct
+          WHERE ct.tag_id IN (${blockedTagIds.join(',')})
+        )`;
+      }
+    }
+
+    const sortColumn = sortColumns[sort];
+    const sortDir = order.toUpperCase();
+
+    // Get sorted cards
     const cards = await db.prepare(`
       SELECT
         c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.created_at,
+        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
+        c.created_at, c.updated_at,
         u.id as uploader_id, u.username, u.display_name, u.avatar_url
       FROM cards c
       JOIN card_versions cv ON c.head_version_id = cv.id
       LEFT JOIN users u ON c.uploader_id = u.id
       WHERE c.visibility = 'public'
       AND c.moderation_state = 'ok'
-      ORDER BY (c.upvotes + c.downloads_count * 0.5) DESC, c.created_at DESC
+      ${blockedTagCondition}
+      ORDER BY ${sortColumn} ${sortDir}, c.created_at DESC
       LIMIT ? OFFSET ?
     `).all<{
       id: string;
@@ -276,7 +338,9 @@ async function getTrendingFeed(request: NextRequest) {
       thumbnail_path: string | null;
       upvotes: number;
       downloads_count: number;
+      favorites_count: number;
       created_at: number;
+      updated_at: number;
       uploader_id: string | null;
       username: string | null;
       display_name: string | null;
@@ -286,6 +350,7 @@ async function getTrendingFeed(request: NextRequest) {
     const totalRow = await db.prepare(`
       SELECT COUNT(*) as count FROM cards
       WHERE visibility = 'public' AND moderation_state = 'ok'
+      ${blockedTagCondition}
     `).get<{ count: number }>();
     const total = totalRow?.count || 0;
 
@@ -298,7 +363,9 @@ async function getTrendingFeed(request: NextRequest) {
       thumbnailPath: row.thumbnail_path,
       upvotes: row.upvotes,
       downloadsCount: row.downloads_count,
+      favoritesCount: row.favorites_count,
       createdAt: row.created_at,
+      modifiedAt: row.updated_at,
       reason: 'trending' as const,
       uploader: row.uploader_id ? {
         id: row.uploader_id,
@@ -316,7 +383,7 @@ async function getTrendingFeed(request: NextRequest) {
       hasMore: offset + items.length < total,
     });
   } catch (error) {
-    console.error('Error fetching trending feed:', error);
+    console.error('Error fetching sorted feed:', error);
     return NextResponse.json(
       { error: 'Failed to fetch feed' },
       { status: 500 }

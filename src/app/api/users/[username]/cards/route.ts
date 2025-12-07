@@ -17,6 +17,7 @@ export async function GET(
     const page = parseInt(searchParams.get('page') || '1');
     const limit = Math.min(parseInt(searchParams.get('limit') || '24'), 100);
     const sort = searchParams.get('sort') || 'newest';
+    const visibilityFilter = searchParams.get('visibility') || 'all';
 
     const db = await getDatabase();
     const offset = (page - 1) * limit;
@@ -46,10 +47,14 @@ export async function GET(
         orderBy = 'c.created_at ASC';
         break;
       case 'popular':
+      case 'upvotes':
         orderBy = '(c.upvotes - c.downvotes) DESC, c.created_at DESC';
         break;
       case 'downloads':
         orderBy = 'c.downloads_count DESC, c.created_at DESC';
+        break;
+      case 'name':
+        orderBy = 'c.name ASC';
         break;
       case 'newest':
       default:
@@ -61,9 +66,14 @@ export async function GET(
     // Others: only public, nsfw_only
     let visibilityCondition: string;
     if (isOwner || isAdmin) {
-      visibilityCondition = isAdmin
-        ? `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted', 'blocked')`
-        : `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted')`;
+      // Apply specific visibility filter if requested by owner
+      if (visibilityFilter !== 'all') {
+        visibilityCondition = `c.visibility = '${visibilityFilter}'`;
+      } else {
+        visibilityCondition = isAdmin
+          ? `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted', 'blocked')`
+          : `c.visibility IN ('public', 'private', 'nsfw_only', 'unlisted')`;
+      }
     } else {
       visibilityCondition = `c.visibility IN ('public', 'nsfw_only')`;
     }

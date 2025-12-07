@@ -30,5 +30,7 @@ next-env.d.ts
 .open-next/
 testing/
 *.pdf
-WIP.md
 test-*.ts
+
+# internal docs (not for sharing)
+docs/internal/

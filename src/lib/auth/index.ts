@@ -26,6 +26,7 @@ export interface User {
   id: string;
   username: string;
   displayName: string | null;
+  avatarUrl: string | null;
   isAdmin: boolean;
 }
 
@@ -63,7 +64,7 @@ export async function login(username: string, password: string): Promise<{ user:
   const db = await getDatabase();
 
   const user = await db.prepare(`
-    SELECT id, username, display_name, password_hash, is_admin
+    SELECT id, username, display_name, avatar_url, password_hash, is_admin
     FROM users WHERE username = ?
   `).get<UserRow>(username);
 
@@ -90,6 +91,7 @@ export async function login(username: string, password: string): Promise<{ user:
       id: user.id,
       username: user.username,
       displayName: user.display_name,
+      avatarUrl: user.avatar_url || null,
       isAdmin: user.is_admin === 1,
     },
     sessionId,
@@ -125,6 +127,7 @@ export async function getSessionById(sessionId: string): Promise<{ user: User; s
       s.expires_at,
       u.username,
       u.display_name,
+      u.avatar_url,
       u.is_admin
     FROM sessions s
     JOIN users u ON s.user_id = u.id
@@ -135,6 +138,7 @@ export async function getSessionById(sessionId: string): Promise<{ user: User; s
     expires_at: number;
     username: string;
     display_name: string | null;
+    avatar_url: string | null;
     is_admin: number;
   }>(sessionId);
 
@@ -155,6 +159,7 @@ export async function getSessionById(sessionId: string): Promise<{ user: User; s
       id: result.user_id,
       username: result.username,
       displayName: result.display_name,
+      avatarUrl: result.avatar_url,
       isAdmin: result.is_admin === 1,
     },
     session: {
@@ -198,6 +203,7 @@ export async function register(username: string, password: string): Promise<{ us
       id,
       username,
       displayName: null,
+      avatarUrl: null,
       isAdmin: false,
     },
     sessionId,
@@ -215,7 +221,7 @@ export async function loginWithOAuth(provider: string, providerId: string, profi
 
   // Check if user exists with this provider
   let user = await db.prepare(`
-    SELECT id, username, display_name, is_admin
+    SELECT id, username, display_name, avatar_url, is_admin
     FROM users WHERE provider = ? AND provider_id = ?
   `).get<UserRow>(provider, providerId);
 
@@ -244,7 +250,7 @@ export async function loginWithOAuth(provider: string, providerId: string, profi
       providerId
     );
 
-    user = { id, username, display_name: profile.displayName || username, is_admin: 0 } as UserRow;
+    user = { id, username, display_name: profile.displayName || username, avatar_url: profile.avatarUrl || null, is_admin: 0 } as UserRow;
   }
 
   // Create session
@@ -261,6 +267,7 @@ export async function loginWithOAuth(provider: string, providerId: string, profi
       id: user.id,
       username: user.username,
       displayName: user.display_name,
+      avatarUrl: user.avatar_url || null,
       isAdmin: user.is_admin === 1,
     },
     sessionId,

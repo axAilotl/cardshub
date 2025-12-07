@@ -41,12 +41,11 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
   const isNsfw = card.tags.some(tag => tag.slug === 'nsfw');
   const shouldBlur = settings.blurNsfwContent && isNsfw;
 
-  const handleClick = (e: React.MouseEvent) => {
+  // Only intercept click when onQuickView is provided (modal mode)
+  const handleClick = onQuickView ? (e: React.MouseEvent) => {
     e.preventDefault();
-    if (onQuickView) {
-      onQuickView(card);
-    }
-  };
+    onQuickView(card);
+  } : undefined;
 
   const handleCreatorClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -80,13 +79,19 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
     }
   };
 
+  // Use Link wrapper for direct navigation, div for modal mode
+  const Wrapper = onQuickView ? 'div' : Link;
+  const wrapperProps = onQuickView
+    ? { onClick: handleClick }
+    : { href: `/card/${card.slug}` };
+
   return (
-    <div
+    <Wrapper
+      {...wrapperProps as any}
       className={cn(
-        'glass-card rounded-xl overflow-hidden group cursor-pointer transition-transform hover:scale-[1.02]',
+        'glass-card rounded-xl overflow-hidden group cursor-pointer transition-transform hover:scale-[1.02] block',
         settings.cardSize === 'large' && 'scale-100' // Base size when large mode
       )}
-      onClick={handleClick}
     >
       {/* Image container */}
       <div className={cn(
@@ -253,7 +258,7 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
           <span>{formatCount(card.tokensTotal)}</span>
         </div>
       </div>
-    </div>
+    </Wrapper>
   );
 }
 
