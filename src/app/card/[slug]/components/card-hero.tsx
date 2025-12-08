@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Button, Badge } from '@/components/ui';
 import type { CardDetail, SourceFormat } from '@/types/card';
 import { useAuth } from '@/lib/auth/context';
+import { useSettings } from '@/lib/settings';
 import { cn } from '@/lib/utils/cn';
 
 // Format badge component
@@ -78,6 +79,7 @@ function VisibilityBadge({ visibility }: { visibility: CardVisibility }) {
 
 export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
   const { user } = useAuth();
+  const { settings } = useSettings();
   const router = useRouter();
   const [isDeleting, setIsDeleting] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
@@ -88,6 +90,10 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
   const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 
   const isOwner = user && card.uploader?.id === user.id;
+
+  // Check if card has NSFW tag
+  const isNsfw = card.tags.some(tag => tag.slug === 'nsfw');
+  const shouldBlur = settings.blurNsfwContent && isNsfw;
 
   useEffect(() => {
     if (user && card) {
@@ -193,13 +199,16 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
       <div className="relative z-20 flex flex-col md:flex-row gap-6 p-6">
         {/* Card image */}
         <div className="flex-shrink-0">
-          <div className="relative w-52 h-72 rounded-lg overflow-hidden border-2 border-nebula/30 shadow-xl">
+          <div className="relative w-52 h-72 rounded-lg overflow-hidden border-2 border-nebula/30 shadow-xl group">
             {(card.thumbnailPath || card.imagePath) ? (
               <Image
                 src={card.thumbnailPath || card.imagePath!}
                 alt={card.name}
                 fill
-                className="object-cover"
+                className={cn(
+                  'object-cover transition-all duration-300',
+                  shouldBlur && 'blur-xl group-hover:blur-none'
+                )}
                 priority
               />
             ) : (

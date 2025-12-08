@@ -118,8 +118,27 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
         {/* Overlay gradient */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
 
-        {/* Metadata icons - top left */}
-        <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+        {/* Feed reason badge - top left */}
+        {card.feedReason && (
+          <div className="absolute top-2 left-2">
+            <span className={cn(
+              'text-xs px-2 py-0.5 rounded-full',
+              card.feedReason === 'followed_user' && 'bg-blue-500/20 text-blue-400',
+              card.feedReason === 'followed_tag' && 'bg-purple-500/20 text-purple-400',
+              card.feedReason === 'trending' && 'bg-amber-500/20 text-amber-400',
+            )}>
+              {card.feedReason === 'followed_user' && 'Following'}
+              {card.feedReason === 'followed_tag' && 'Tag'}
+              {card.feedReason === 'trending' && 'Trending'}
+            </span>
+          </div>
+        )}
+
+        {/* Metadata icons - top left (offset if feed reason shown) */}
+        <div className={cn(
+          'absolute left-2 flex flex-wrap gap-1',
+          card.feedReason ? 'top-9' : 'top-2'
+        )}>
           {card.hasAlternateGreetings && card.alternateGreetingsCount > 0 && (
             <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/60 text-xs text-starlight/80" title="Total greetings (first + alternates)">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -206,6 +225,13 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
       {/* Stats bar */}
       <div className="p-2.5 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2.5">
+          {/* NSFW indicator */}
+          {isNsfw && (
+            <span className="text-orange-400/60" title="NSFW">
+              🔥
+            </span>
+          )}
+
           {/* Votes */}
           <div className="flex items-center gap-1">
             <span className={card.score >= 0 ? 'text-aurora' : 'text-red-400'}>

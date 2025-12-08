@@ -8,6 +8,7 @@ import type { CardListItem, SourceFormat } from '@/types/card';
 import { useAuth } from '@/lib/auth/context';
 import { cn } from '@/lib/utils/cn';
 import { formatDate, stripHtml } from '@/lib/utils/format';
+import { useSettings } from '@/lib/settings';
 
 // Format badge component
 function FormatBadge({ format, specVersion, className }: { format: SourceFormat; specVersion: string; className?: string }) {
@@ -40,9 +41,14 @@ interface CardModalProps {
 
 export function CardModal({ card, isOpen, onClose }: CardModalProps) {
   const { user } = useAuth();
+  const { settings } = useSettings();
   const [isFavorited, setIsFavorited] = useState(false);
   const [favoritesCount, setFavoritesCount] = useState(0);
   const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
+
+  // Check if card has NSFW tag
+  const isNsfw = card?.tags.some(tag => tag.slug === 'nsfw') ?? false;
+  const shouldBlur = settings.blurNsfwContent && isNsfw;
 
   useEffect(() => {
     if (card) {
@@ -98,13 +104,16 @@ export function CardModal({ card, isOpen, onClose }: CardModalProps) {
       <ModalBody className="p-0">
         <div className="flex flex-col lg:flex-row">
           {/* Left side - Image */}
-          <div className="relative w-full lg:w-2/5 aspect-[3/4] lg:aspect-auto lg:min-h-[600px] flex-shrink-0">
+          <div className="relative w-full lg:w-2/5 aspect-[3/4] lg:aspect-auto lg:min-h-[600px] flex-shrink-0 group">
             {(card.thumbnailPath || card.imagePath) ? (
               <Image
                 src={card.thumbnailPath || card.imagePath!}
                 alt={card.name}
                 fill
-                className="object-cover rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none"
+                className={cn(
+                  'object-cover rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none transition-all duration-300',
+                  shouldBlur && 'blur-xl group-hover:blur-none'
+                )}
               />
             ) : (
               <div className="w-full h-full bg-cosmic-teal/50 flex items-center justify-center rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none">

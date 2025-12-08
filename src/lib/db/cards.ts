@@ -828,3 +828,82 @@ export async function updateModerationState(cardId: string, state: 'ok' | 'revie
 export function computeContentHash(data: Buffer | string): string {
   return createHash('sha256').update(data).digest('hex');
 }
+
+/**
+ * Get cards by IDs - returns full CardListItem objects
+ * Used by feed API to get full card data after determining which IDs to show
+ */
+export async function getCardsByIds(cardIds: string[], userId?: string): Promise<CardListItem[]> {
+  if (cardIds.length === 0) return [];
+
+  const db = await getDb();
+  const placeholders = cardIds.map(() => '?').join(', ');
+
+  const rows = await db.prepare(`
+    SELECT c.id, c.slug, c.name, c.description, c.creator, c.creator_notes,
+      c.visibility, c.moderation_state, c.upvotes, c.downvotes, c.favorites_count,
+      c.downloads_count, c.comments_count, c.forks_count, c.uploader_id, c.created_at, c.updated_at,
+      v.id as version_id, v.spec_version, v.source_format, v.storage_url,
+      v.has_assets, v.assets_count, v.image_path, v.thumbnail_path, v.tokens_total,
+      v.has_alt_greetings, v.alt_greetings_count, v.has_lorebook, v.lorebook_entries_count,
+      v.has_embedded_images, v.embedded_images_count,
+      u.username as uploader_username, u.display_name as uploader_display_name
+    FROM cards c
+    LEFT JOIN card_versions v ON c.head_version_id = v.id
+    LEFT JOIN users u ON c.uploader_id = u.id
+    WHERE c.id IN (${placeholders})
+  `).all<CardWithVersionRow & { uploader_username?: string; uploader_display_name?: string }>(...cardIds);
+
+  // Get tags for all cards
+  const tagsMap = await getTagsForCards(cardIds);
+
+  // Get favorites for authenticated user
+  const favoritesSet = userId ? await getFavoritesForCards(cardIds, userId) : new Set<string>();
+
+  // Create a map for quick lookup
+  const rowMap = new Map(rows.map(r => [r.id, r]));
+
+  // Return in same order as input cardIds
+  return cardIds
+    .map(id => rowMap.get(id))
+    .filter((row): row is NonNullable<typeof row> => row !== undefined)
+    .map(row => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      creator: row.creator,
+      creatorNotes: row.creator_notes,
+      specVersion: row.spec_version,
+      sourceFormat: (row.source_format || 'png') as CardListItem['sourceFormat'],
+      hasAssets: row.has_assets === 1,
+      assetsCount: row.assets_count || 0,
+      imagePath: row.image_path,
+      thumbnailPath: row.thumbnail_path,
+      tokensTotal: row.tokens_total,
+      upvotes: row.upvotes,
+      downvotes: row.downvotes,
+      score: row.upvotes - row.downvotes,
+      favoritesCount: row.favorites_count,
+      downloadsCount: row.downloads_count,
+      commentsCount: row.comments_count,
+      forksCount: row.forks_count,
+      hasAlternateGreetings: row.has_alt_greetings === 1,
+      alternateGreetingsCount: row.alt_greetings_count,
+      totalGreetingsCount: row.alt_greetings_count + 1,
+      hasLorebook: row.has_lorebook === 1,
+      lorebookEntriesCount: row.lorebook_entries_count,
+      hasEmbeddedImages: row.has_embedded_images === 1,
+      embeddedImagesCount: row.embedded_images_count,
+      visibility: row.visibility,
+      tags: tagsMap.get(row.id) || [],
+      uploader: row.uploader_id ? {
+        id: row.uploader_id,
+        username: row.uploader_username || '',
+        displayName: row.uploader_display_name || null,
+      } : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ...(userId && { isFavorited: favoritesSet.has(row.id) }),
+    }));
+}

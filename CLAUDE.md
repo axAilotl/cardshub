@@ -24,6 +24,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Have navigation links added to relevant places (header, sidebar, card items, etc.)
 - Be reachable by clicking through the UI, not just typing the URL
 
+## CRITICAL: Component Reuse
+
+**ALWAYS reuse existing components. NEVER create duplicate implementations.**
+
+When displaying cards in any context (feed, explore, user profile, search results, etc.):
+- Use `CardGrid` and `CardItem` from `src/components/cards/`
+- Use `CardModal` for quick view modals
+- Use the same API response shape (`CardListItem` from `src/types/card.ts`)
+
+**BAD:** Creating a new `FeedCardItem` component that duplicates `CardItem` functionality
+**GOOD:** Adding an optional prop to `CardItem` (e.g., `feedReason`) for variant behavior
+
+Key shared components:
+- `CardGrid` / `CardItem` - Card display in grids
+- `CardModal` - Quick view modal
+- `AppShell` - Page layout wrapper
+- `Button`, `Badge`, `Modal` - UI primitives from `src/components/ui/`
+
+When an API needs to return card data, use the `getCardsByIds()` helper from `src/lib/db/cards.ts` to ensure consistent `CardListItem` shape.
+
 ## Project Overview
 
 CardsHub is a platform for sharing, discovering, and managing AI character cards (CCv2/CCv3 format). It's a clone of Wyvern.chat's explore functionality built with Next.js 15.

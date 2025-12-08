@@ -241,6 +241,9 @@ export interface CardListItem {
   // User-specific (when authenticated)
   userVote?: number | null;
   isFavorited?: boolean;
+
+  // Feed-specific (optional, used by /api/feed)
+  feedReason?: 'followed_user' | 'followed_tag' | 'trending';
 }
 
 // Saved asset from extracted packages (charx/voxta)

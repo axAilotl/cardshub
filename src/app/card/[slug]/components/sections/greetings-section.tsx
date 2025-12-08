@@ -1,15 +1,20 @@
 'use client';
 
 import { Badge } from '@/components/ui';
+import { useSettings } from '@/lib/settings';
+import { cn } from '@/lib/utils/cn';
 import { renderTextWithImages } from '../utils';
 
 interface GreetingsSectionProps {
   firstMessage: string;
   alternateGreetings?: string[];
   firstMessageTokens: number;
+  isNsfw?: boolean;
 }
 
-export function GreetingsSection({ firstMessage, alternateGreetings, firstMessageTokens }: GreetingsSectionProps) {
+export function GreetingsSection({ firstMessage, alternateGreetings, firstMessageTokens, isNsfw }: GreetingsSectionProps) {
+  const { settings } = useSettings();
+  const shouldBlur = settings.blurNsfwContent && isNsfw;
   const totalGreetings = 1 + (alternateGreetings?.length || 0);
 
   return (
@@ -21,21 +26,33 @@ export function GreetingsSection({ firstMessage, alternateGreetings, firstMessag
         </span>
       </h2>
       <div className="space-y-4">
-        <div className="bg-cosmic-teal/30 rounded-lg p-4">
+        <div className={cn(
+          'bg-cosmic-teal/30 rounded-lg p-4 group',
+          shouldBlur && 'relative'
+        )}>
           <div className="flex items-center gap-2 mb-2">
             <Badge variant="success" size="sm">Default</Badge>
           </div>
-          <div className="whitespace-pre-wrap text-sm text-starlight/70">
+          <div className={cn(
+            'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
+            shouldBlur && 'blur-md group-hover:blur-none select-none group-hover:select-auto'
+          )}>
             {renderTextWithImages(firstMessage, { centered: true, halfSize: true })}
           </div>
         </div>
 
         {alternateGreetings?.map((greeting, index) => (
-          <div key={index} className="bg-cosmic-teal/30 rounded-lg p-4">
+          <div key={index} className={cn(
+            'bg-cosmic-teal/30 rounded-lg p-4 group',
+            shouldBlur && 'relative'
+          )}>
             <div className="flex items-center gap-2 mb-2">
               <Badge variant="info" size="sm">Greeting {index + 2}</Badge>
             </div>
-            <div className="whitespace-pre-wrap text-sm text-starlight/70">
+            <div className={cn(
+              'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
+              shouldBlur && 'blur-md group-hover:blur-none select-none group-hover:select-auto'
+            )}>
               {renderTextWithImages(greeting, { centered: true, halfSize: true })}
             </div>
           </div>

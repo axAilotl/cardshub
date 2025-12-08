@@ -1,49 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
+import { getCardsByIds } from '@/lib/db/cards';
 import { getSession } from '@/lib/auth';
+import type { CardListItem, PaginatedResponse } from '@/types/card';
 
-type SortOption = 'for_you' | 'newest' | 'modified' | 'upvotes' | 'downloads' | 'favorites';
-type SortOrder = 'asc' | 'desc';
-
-interface FeedCard {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  creator: string | null;
-  thumbnailPath: string | null;
-  upvotes: number;
-  downloadsCount: number;
-  favoritesCount: number;
-  createdAt: number;
-  modifiedAt: number;
-  reason: 'followed_user' | 'followed_tag' | 'trending';
-  uploader: {
-    id: string;
-    username: string;
-    displayName: string | null;
-    avatarUrl: string | null;
-  } | null;
-}
-
-// Map sort options to SQL columns
-const sortColumns: Record<SortOption, string> = {
-  for_you: 'c.created_at', // Not actually used for for_you
-  newest: 'c.created_at',
-  modified: 'c.updated_at',
-  upvotes: 'c.upvotes',
-  downloads: 'c.downloads_count',
-  favorites: 'c.favorites_count',
-};
+type FeedReason = 'followed_user' | 'followed_tag' | 'trending';
 
 /**
  * GET /api/feed
  * Get personalized feed for current user
- * Query params:
- *  - page: number (default 1)
- *  - limit: number (default 24, max 50)
- *  - sort: for_you | newest | modified | upvotes | downloads | favorites (default: newest)
- *  - order: asc | desc (default: desc)
+ * Returns CardListItem[] with feedReason field for consistency with explore page
  */
 export async function GET(request: NextRequest) {
   try {
@@ -52,32 +18,20 @@ export async function GET(request: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
     const offset = (page - 1) * limit;
-    const sort = (searchParams.get('sort') || 'newest') as SortOption;
-    const order = (searchParams.get('order') || 'desc') as SortOrder;
-
-    // Validate sort option
-    if (!sortColumns[sort]) {
-      return NextResponse.json({ error: 'Invalid sort option' }, { status: 400 });
-    }
-
-    // Non-authenticated or non-personalized sort
-    if (!session || sort !== 'for_you') {
-      return getSortedFeed(request, session?.user?.id || null, sort, order, page, limit, offset);
-    }
-
-    // For authenticated users with "for_you" sort, use personalized feed
 
     const db = await getDatabase();
-    const userId = session.user.id;
+    const userId = session?.user?.id || null;
 
-    // Get blocked tags for filtering
-    const blockedTags = await db.prepare(`
-      SELECT tag_id FROM tag_preferences
-      WHERE user_id = ? AND preference = 'block'
-    `).all<{ tag_id: number }>(userId);
-    const blockedTagIds = blockedTags.map(t => t.tag_id);
+    // Get blocked tags for filtering (if authenticated)
+    let blockedTagIds: number[] = [];
+    if (userId) {
+      const blockedTags = await db.prepare(`
+        SELECT tag_id FROM tag_preferences
+        WHERE user_id = ? AND preference = 'block'
+      `).all<{ tag_id: number }>(userId);
+      blockedTagIds = blockedTags.map(t => t.tag_id);
+    }
 
-    // Build blocked tags condition
     const blockedTagCondition = blockedTagIds.length > 0
       ? `AND c.id NOT IN (
           SELECT ct.card_id FROM card_tags ct
@@ -85,305 +39,126 @@ export async function GET(request: NextRequest) {
         )`
       : '';
 
-    // Get cards from followed users
-    const followedUserCards = await db.prepare(`
-      SELECT
-        c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
-        c.created_at, c.updated_at,
-        u.id as uploader_id, u.username, u.display_name, u.avatar_url,
-        'followed_user' as reason
-      FROM cards c
-      JOIN card_versions cv ON c.head_version_id = cv.id
-      LEFT JOIN users u ON c.uploader_id = u.id
-      WHERE c.uploader_id IN (
-        SELECT following_id FROM user_follows WHERE follower_id = ?
-      )
-      AND c.visibility = 'public'
-      AND c.moderation_state = 'ok'
-      ${blockedTagCondition}
-      ORDER BY c.created_at DESC
-      LIMIT 50
-    `).all<{
-      id: string;
-      slug: string;
-      name: string;
-      description: string | null;
-      creator: string | null;
-      thumbnail_path: string | null;
-      upvotes: number;
-      downloads_count: number;
-      favorites_count: number;
-      created_at: number;
-      updated_at: number;
-      uploader_id: string | null;
-      username: string | null;
-      display_name: string | null;
-      avatar_url: string | null;
-      reason: string;
-    }>(userId);
+    // Collect card IDs with reasons
+    const cardReasons = new Map<string, FeedReason>();
 
-    // Get cards with followed tags
-    const followedTagCards = await db.prepare(`
-      SELECT DISTINCT
-        c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
-        c.created_at, c.updated_at,
-        u.id as uploader_id, u.username, u.display_name, u.avatar_url,
-        'followed_tag' as reason
-      FROM cards c
-      JOIN card_versions cv ON c.head_version_id = cv.id
-      JOIN card_tags ct ON c.id = ct.card_id
-      LEFT JOIN users u ON c.uploader_id = u.id
-      WHERE ct.tag_id IN (
-        SELECT tag_id FROM tag_preferences WHERE user_id = ? AND preference = 'follow'
-      )
-      AND c.visibility = 'public'
-      AND c.moderation_state = 'ok'
-      ${blockedTagCondition}
-      ORDER BY c.created_at DESC
-      LIMIT 50
-    `).all<{
-      id: string;
-      slug: string;
-      name: string;
-      description: string | null;
-      creator: string | null;
-      thumbnail_path: string | null;
-      upvotes: number;
-      downloads_count: number;
-      favorites_count: number;
-      created_at: number;
-      updated_at: number;
-      uploader_id: string | null;
-      username: string | null;
-      display_name: string | null;
-      avatar_url: string | null;
-      reason: string;
-    }>(userId);
+    if (userId) {
+      // Get cards from followed users
+      const followedUserCards = await db.prepare(`
+        SELECT c.id
+        FROM cards c
+        WHERE c.uploader_id IN (
+          SELECT following_id FROM user_follows WHERE follower_id = ?
+        )
+        AND c.visibility = 'public'
+        AND c.moderation_state = 'ok'
+        ${blockedTagCondition}
+        ORDER BY c.created_at DESC
+        LIMIT 50
+      `).all<{ id: string }>(userId);
+
+      for (const card of followedUserCards) {
+        if (!cardReasons.has(card.id)) {
+          cardReasons.set(card.id, 'followed_user');
+        }
+      }
+
+      // Get cards with followed tags
+      const followedTagCards = await db.prepare(`
+        SELECT DISTINCT c.id
+        FROM cards c
+        JOIN card_tags ct ON c.id = ct.card_id
+        WHERE ct.tag_id IN (
+          SELECT tag_id FROM tag_preferences WHERE user_id = ? AND preference = 'follow'
+        )
+        AND c.visibility = 'public'
+        AND c.moderation_state = 'ok'
+        ${blockedTagCondition}
+        ORDER BY c.created_at DESC
+        LIMIT 50
+      `).all<{ id: string }>(userId);
+
+      for (const card of followedTagCards) {
+        if (!cardReasons.has(card.id)) {
+          cardReasons.set(card.id, 'followed_tag');
+        }
+      }
+    }
 
     // Get trending cards to fill gaps
     const trendingCards = await db.prepare(`
-      SELECT
-        c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
-        c.created_at, c.updated_at,
-        u.id as uploader_id, u.username, u.display_name, u.avatar_url,
-        'trending' as reason
+      SELECT c.id
       FROM cards c
-      JOIN card_versions cv ON c.head_version_id = cv.id
-      LEFT JOIN users u ON c.uploader_id = u.id
       WHERE c.visibility = 'public'
       AND c.moderation_state = 'ok'
       ${blockedTagCondition}
       ORDER BY (c.upvotes + c.downloads_count * 0.5) DESC, c.created_at DESC
-      LIMIT 50
-    `).all<{
-      id: string;
-      slug: string;
-      name: string;
-      description: string | null;
-      creator: string | null;
-      thumbnail_path: string | null;
-      upvotes: number;
-      downloads_count: number;
-      favorites_count: number;
-      created_at: number;
-      updated_at: number;
-      uploader_id: string | null;
-      username: string | null;
-      display_name: string | null;
-      avatar_url: string | null;
-      reason: string;
-    }>();
+      LIMIT 100
+    `).all<{ id: string }>();
 
-    // Combine and deduplicate
-    const seenIds = new Set<string>();
-    const allCards: FeedCard[] = [];
-
-    const mapCard = (row: typeof followedUserCards[0]): FeedCard => ({
-      id: row.id,
-      slug: row.slug,
-      name: row.name,
-      description: row.description,
-      creator: row.creator,
-      thumbnailPath: row.thumbnail_path,
-      upvotes: row.upvotes,
-      downloadsCount: row.downloads_count,
-      favoritesCount: row.favorites_count,
-      createdAt: row.created_at,
-      modifiedAt: row.updated_at,
-      reason: row.reason as FeedCard['reason'],
-      uploader: row.uploader_id ? {
-        id: row.uploader_id,
-        username: row.username!,
-        displayName: row.display_name,
-        avatarUrl: row.avatar_url,
-      } : null,
-    });
-
-    // Priority order: followed users, then followed tags, then trending
-    // Interleave to keep feed interesting
-    const sources = [
-      { cards: followedUserCards, index: 0 },
-      { cards: followedTagCards, index: 0 },
-      { cards: trendingCards, index: 0 },
-    ];
-
-    // Round-robin interleaving with priority to personalized content
-    let roundRobin = 0;
-    while (allCards.length < limit + offset) {
-      let added = false;
-
-      // Try each source in round-robin order
-      for (let i = 0; i < sources.length; i++) {
-        const sourceIdx = (roundRobin + i) % sources.length;
-        const source = sources[sourceIdx];
-
-        while (source.index < source.cards.length) {
-          const card = source.cards[source.index];
-          source.index++;
-
-          if (!seenIds.has(card.id)) {
-            seenIds.add(card.id);
-            allCards.push(mapCard(card));
-            added = true;
-            break;
-          }
-        }
-
-        if (added) break;
+    for (const card of trendingCards) {
+      if (!cardReasons.has(card.id)) {
+        cardReasons.set(card.id, 'trending');
       }
+    }
 
-      if (!added) break; // No more cards in any source
-      roundRobin++;
+    // Build ordered list: personalized first, then trending
+    const orderedIds: string[] = [];
+    const seenIds = new Set<string>();
+
+    // Add personalized cards first (interleaved)
+    const followedUserIds = [...cardReasons.entries()]
+      .filter(([, reason]) => reason === 'followed_user')
+      .map(([id]) => id);
+    const followedTagIds = [...cardReasons.entries()]
+      .filter(([, reason]) => reason === 'followed_tag')
+      .map(([id]) => id);
+
+    // Interleave followed users and tags
+    const maxPersonalized = Math.max(followedUserIds.length, followedTagIds.length);
+    for (let i = 0; i < maxPersonalized; i++) {
+      if (i < followedUserIds.length && !seenIds.has(followedUserIds[i])) {
+        orderedIds.push(followedUserIds[i]);
+        seenIds.add(followedUserIds[i]);
+      }
+      if (i < followedTagIds.length && !seenIds.has(followedTagIds[i])) {
+        orderedIds.push(followedTagIds[i]);
+        seenIds.add(followedTagIds[i]);
+      }
+    }
+
+    // Add trending to fill remaining slots
+    for (const card of trendingCards) {
+      if (!seenIds.has(card.id)) {
+        orderedIds.push(card.id);
+        seenIds.add(card.id);
+      }
     }
 
     // Apply pagination
-    const paginatedCards = allCards.slice(offset, offset + limit);
-    const total = allCards.length;
+    const paginatedIds = orderedIds.slice(offset, offset + limit);
+    const total = orderedIds.length;
 
-    return NextResponse.json({
-      items: paginatedCards,
-      total,
-      page,
-      limit,
-      hasMore: offset + paginatedCards.length < total,
-    });
-  } catch (error) {
-    console.error('Error fetching feed:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch feed' },
-      { status: 500 }
-    );
-  }
-}
+    // Fetch full card data using shared helper (ensures consistent format with explore)
+    const cards = await getCardsByIds(paginatedIds, userId || undefined);
 
-/**
- * Sorted feed with optional blocked tag filtering for authenticated users
- */
-async function getSortedFeed(
-  request: NextRequest,
-  userId: string | null,
-  sort: SortOption,
-  order: SortOrder,
-  page: number,
-  limit: number,
-  offset: number
-) {
-  try {
-    const db = await getDatabase();
-
-    // Get blocked tags for filtering (if authenticated)
-    let blockedTagCondition = '';
-    if (userId) {
-      const blockedTags = await db.prepare(`
-        SELECT tag_id FROM tag_preferences
-        WHERE user_id = ? AND preference = 'block'
-      `).all<{ tag_id: number }>(userId);
-      const blockedTagIds = blockedTags.map(t => t.tag_id);
-
-      if (blockedTagIds.length > 0) {
-        blockedTagCondition = `AND c.id NOT IN (
-          SELECT ct.card_id FROM card_tags ct
-          WHERE ct.tag_id IN (${blockedTagIds.join(',')})
-        )`;
-      }
-    }
-
-    const sortColumn = sortColumns[sort];
-    const sortDir = order.toUpperCase();
-
-    // Get sorted cards
-    const cards = await db.prepare(`
-      SELECT
-        c.id, c.slug, c.name, c.description, c.creator,
-        cv.thumbnail_path, c.upvotes, c.downloads_count, c.favorites_count,
-        c.created_at, c.updated_at,
-        u.id as uploader_id, u.username, u.display_name, u.avatar_url
-      FROM cards c
-      JOIN card_versions cv ON c.head_version_id = cv.id
-      LEFT JOIN users u ON c.uploader_id = u.id
-      WHERE c.visibility = 'public'
-      AND c.moderation_state = 'ok'
-      ${blockedTagCondition}
-      ORDER BY ${sortColumn} ${sortDir}, c.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all<{
-      id: string;
-      slug: string;
-      name: string;
-      description: string | null;
-      creator: string | null;
-      thumbnail_path: string | null;
-      upvotes: number;
-      downloads_count: number;
-      favorites_count: number;
-      created_at: number;
-      updated_at: number;
-      uploader_id: string | null;
-      username: string | null;
-      display_name: string | null;
-      avatar_url: string | null;
-    }>(limit, offset);
-
-    const totalRow = await db.prepare(`
-      SELECT COUNT(*) as count FROM cards
-      WHERE visibility = 'public' AND moderation_state = 'ok'
-      ${blockedTagCondition}
-    `).get<{ count: number }>();
-    const total = totalRow?.count || 0;
-
-    const items: FeedCard[] = cards.map(row => ({
-      id: row.id,
-      slug: row.slug,
-      name: row.name,
-      description: row.description,
-      creator: row.creator,
-      thumbnailPath: row.thumbnail_path,
-      upvotes: row.upvotes,
-      downloadsCount: row.downloads_count,
-      favoritesCount: row.favorites_count,
-      createdAt: row.created_at,
-      modifiedAt: row.updated_at,
-      reason: 'trending' as const,
-      uploader: row.uploader_id ? {
-        id: row.uploader_id,
-        username: row.username!,
-        displayName: row.display_name,
-        avatarUrl: row.avatar_url,
-      } : null,
+    // Add feedReason to each card
+    const itemsWithReason: CardListItem[] = cards.map(card => ({
+      ...card,
+      feedReason: cardReasons.get(card.id) || 'trending',
     }));
 
-    return NextResponse.json({
-      items,
+    const response: PaginatedResponse<CardListItem> = {
+      items: itemsWithReason,
       total,
       page,
       limit,
-      hasMore: offset + items.length < total,
-    });
+      hasMore: offset + paginatedIds.length < total,
+    };
+
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('Error fetching sorted feed:', error);
+    console.error('Error fetching feed:', error);
     return NextResponse.json(
       { error: 'Failed to fetch feed' },
       { status: 500 }

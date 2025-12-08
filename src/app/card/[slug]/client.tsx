@@ -26,6 +26,9 @@ interface CardDetailClientProps {
 export function CardDetailClient({ card }: CardDetailClientProps) {
   const [activeSection, setActiveSection] = useState<Section>('notes');
 
+  // Check if card has NSFW tag (for passing to child components)
+  const isNsfw = card.tags.some(tag => tag.slug === 'nsfw');
+
   // Calculate permanent token count (always sent: description + personality + scenario + system_prompt + post_history)
   const permanentTokens = useMemo(() => {
     return card.tokens.description +
@@ -132,7 +135,7 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
       <div className="w-full">
         <div className="glass rounded-xl p-6">
           {activeSection === 'notes' && (
-            <NotesSection creatorNotes={card.creatorNotes} />
+            <NotesSection creatorNotes={card.creatorNotes} isNsfw={isNsfw} />
           )}
 
           {activeSection === 'general' && (
@@ -144,6 +147,7 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
               firstMessage={card.cardData.data.first_mes}
               alternateGreetings={card.cardData.data.alternate_greetings}
               firstMessageTokens={card.tokens.firstMes}
+              isNsfw={isNsfw}
             />
           )}
 
