@@ -35,6 +35,11 @@ export const cards = sqliteTable('cards', {
   commentsCount: integer('comments_count').default(0),
   forksCount: integer('forks_count').default(0),
   uploaderId: text('uploader_id').references(() => users.id),
+
+  // v1.2: Collection membership
+  collectionId: text('collection_id'), // FK to collections, but defined as soft ref to avoid circular dep
+  collectionItemId: text('collection_item_id'), // Character UUID from Voxta package
+
   createdAt: integer('created_at').default(0),
   updatedAt: integer('updated_at').default(0),
 }, (table) => [
@@ -45,6 +50,7 @@ export const cards = sqliteTable('cards', {
   index('idx_cards_uploader').on(table.uploaderId),
   index('idx_cards_visibility').on(table.visibility),
   index('idx_cards_head_version').on(table.headVersionId),
+  index('idx_cards_collection').on(table.collectionId),
 ]);
 
 // Card Versions
@@ -270,36 +276,48 @@ export const presetTags = sqliteTable('preset_tags', {
   index('idx_preset_tags_tag').on(table.tagId),
 ]);
 
-// v1.2: Collections
+// v1.2: Collections (multi-character packages, e.g., Voxta)
 export const collections = sqliteTable('collections', {
   id: text('id').primaryKey(),
+  slug: text('slug').unique().notNull(),
   name: text('name').notNull(),
   description: text('description'),
-  ownerId: text('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  visibility: text('visibility', { enum: ['public', 'private', 'unlisted'] }).default('public'),
-  
-  isOfficial: integer('is_official').default(0), // For system curated lists
-  isFeatured: integer('is_featured').default(0), // For front page featuring
-  
+  creator: text('creator'),
+  explicitContent: integer('explicit_content').default(0), // NSFW from Voxta ExplicitContent
+
+  // Voxta package.json fields
+  packageId: text('package_id').unique(), // For matching on re-upload
+  packageVersion: text('package_version'),
+  entryResourceKind: integer('entry_resource_kind'),
+  entryResourceId: text('entry_resource_id'),
+  thumbnailResourceKind: integer('thumbnail_resource_kind'),
+  thumbnailResourceId: text('thumbnail_resource_id'),
+  dateCreated: text('date_created'), // Original package dates (ISO string)
+  dateModified: text('date_modified'),
+
+  // Storage
+  storageUrl: text('storage_url').notNull(), // Original .voxpkg
+
+  // Display
+  thumbnailPath: text('thumbnail_path'),
+  thumbnailWidth: integer('thumbnail_width'),
+  thumbnailHeight: integer('thumbnail_height'),
+
+  // Ownership
+  uploaderId: text('uploader_id').references(() => users.id),
+  visibility: text('visibility', { enum: ['public', 'nsfw_only', 'unlisted', 'blocked'] }).default('public'),
+
+  // Stats (tracked separately, not aggregated)
+  itemsCount: integer('items_count').default(0),
+  downloadsCount: integer('downloads_count').default(0),
+
   createdAt: integer('created_at').default(0),
   updatedAt: integer('updated_at').default(0),
 }, (table) => [
-  index('idx_collections_owner').on(table.ownerId),
+  index('idx_collections_package_id').on(table.packageId),
+  index('idx_collections_uploader').on(table.uploaderId),
+  index('idx_collections_slug').on(table.slug),
   index('idx_collections_visibility').on(table.visibility),
-]);
-
-// Collection Items (Polymorphic)
-export const collectionItems = sqliteTable('collection_items', {
-  collectionId: text('collection_id').notNull().references(() => collections.id, { onDelete: 'cascade' }),
-  itemType: text('item_type', { enum: ['card', 'lorebook', 'preset'] }).notNull(),
-  itemId: text('item_id').notNull(), // ID of the card/lorebook/preset
-  
-  order: integer('order').default(0),
-  addedAt: integer('added_at').default(0),
-}, (table) => [
-  primaryKey({ columns: [table.collectionId, table.itemType, table.itemId] }),
-  index('idx_col_items_collection').on(table.collectionId),
-  index('idx_col_items_item').on(table.itemType, table.itemId),
 ]);
 
 // Type exports for inference
@@ -325,5 +343,3 @@ export type Preset = typeof presets.$inferSelect;
 export type NewPreset = typeof presets.$inferInsert;
 export type Collection = typeof collections.$inferSelect;
 export type NewCollection = typeof collections.$inferInsert;
-export type CollectionItem = typeof collectionItems.$inferSelect;
-export type NewCollectionItem = typeof collectionItems.$inferInsert;

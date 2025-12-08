@@ -168,6 +168,10 @@ export interface CardWithVersionRow {
   card_data: string;
   version_created_at: number;
   forked_from_version_id: string | null;
+  // v1.2: Collection fields (from JOIN)
+  collection_id: string | null;
+  collection_slug: string | null;
+  collection_name: string | null;
 }
 
 // Unified database interface that works sync (better-sqlite3) or async (D1)

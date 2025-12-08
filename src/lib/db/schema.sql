@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS cards (
   -- Relationships
   uploader_id TEXT REFERENCES users(id),
 
+  -- v1.2: Collection membership
+  collection_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
+  collection_item_id TEXT,  -- Character UUID from Voxta package
+
   -- Timestamps
   created_at INTEGER DEFAULT (unixepoch()),
   updated_at INTEGER DEFAULT (unixepoch())
@@ -197,6 +201,45 @@ CREATE TABLE IF NOT EXISTS user_follows (
   PRIMARY KEY (follower_id, following_id)
 );
 
+-- v1.2: Collections (multi-character packages, e.g., Voxta)
+CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  creator TEXT,
+  explicit_content INTEGER DEFAULT 0,  -- NSFW from Voxta ExplicitContent
+
+  -- Voxta package.json fields
+  package_id TEXT UNIQUE,              -- For matching on re-upload
+  package_version TEXT,
+  entry_resource_kind INTEGER,
+  entry_resource_id TEXT,
+  thumbnail_resource_kind INTEGER,
+  thumbnail_resource_id TEXT,
+  date_created TEXT,                   -- Original package dates
+  date_modified TEXT,
+
+  -- Storage
+  storage_url TEXT NOT NULL,           -- Original .voxpkg
+
+  -- Display
+  thumbnail_path TEXT,
+  thumbnail_width INTEGER,
+  thumbnail_height INTEGER,
+
+  -- Ownership
+  uploader_id TEXT REFERENCES users(id),
+  visibility TEXT DEFAULT 'public' CHECK (visibility IN ('public', 'nsfw_only', 'unlisted', 'blocked')),
+
+  -- Stats (tracked separately, not aggregated)
+  items_count INTEGER DEFAULT 0,
+  downloads_count INTEGER DEFAULT 0,
+
+  created_at INTEGER DEFAULT (unixepoch()),
+  updated_at INTEGER DEFAULT (unixepoch())
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_cards_created_at ON cards(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cards_downloads ON cards(downloads_count DESC);
@@ -246,6 +289,13 @@ CREATE INDEX IF NOT EXISTS idx_tag_prefs_preference ON tag_preferences(preferenc
 -- v1.1: User Follows indexes
 CREATE INDEX IF NOT EXISTS idx_follows_follower ON user_follows(follower_id);
 CREATE INDEX IF NOT EXISTS idx_follows_following ON user_follows(following_id);
+
+-- v1.2: Collections indexes
+CREATE INDEX IF NOT EXISTS idx_collections_package_id ON collections(package_id);
+CREATE INDEX IF NOT EXISTS idx_collections_uploader ON collections(uploader_id);
+CREATE INDEX IF NOT EXISTS idx_collections_slug ON collections(slug);
+CREATE INDEX IF NOT EXISTS idx_collections_visibility ON collections(visibility);
+CREATE INDEX IF NOT EXISTS idx_cards_collection ON cards(collection_id);
 
 -- Full-text search index (FTS5)
 -- Indexes card name, description, creator, and creator_notes for fast search
@@ -299,4 +349,7 @@ INSERT OR IGNORE INTO tags (name, slug, category) VALUES
   ('Elf', 'elf', 'species'),
   ('Vampire', 'vampire', 'species'),
   ('Demon', 'demon', 'species'),
-  ('Angel', 'angel', 'species');
+  ('Angel', 'angel', 'species'),
+
+  -- v1.2: Format tags
+  ('Collection', 'collection', 'format');

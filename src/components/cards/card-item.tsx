@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Badge } from '@/components/ui';
 import type { CardListItem, SourceFormat } from '@/types/card';
 import { useSettings } from '@/lib/settings';
 import { useAuth } from '@/lib/auth/context';
@@ -173,9 +172,19 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
           )}
         </div>
 
-        {/* Format badge - top right */}
-        <div className="absolute top-2 right-2">
+        {/* Format badge and collection badge - top right */}
+        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
           <FormatBadge format={card.sourceFormat} specVersion={card.specVersion} />
+          {card.collectionId && card.collectionSlug && (
+            <Link
+              href={`/collection/${card.collectionSlug}`}
+              onClick={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded bg-nebula/80 text-xs text-white font-medium hover:bg-nebula transition-colors"
+              title={card.collectionName ? `Part of ${card.collectionName}` : 'Part of a collection'}
+            >
+              COLLECTION
+            </Link>
+          )}
         </div>
 
         {/* Bottom info overlay */}

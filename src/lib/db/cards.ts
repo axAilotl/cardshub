@@ -158,14 +158,17 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
     SELECT c.id, c.slug, c.name, c.description, c.creator, c.creator_notes,
       c.visibility, c.moderation_state, c.upvotes, c.downvotes, c.favorites_count,
       c.downloads_count, c.comments_count, c.forks_count, c.uploader_id, c.created_at, c.updated_at,
+      c.collection_id, c.collection_item_id,
       v.id as version_id, v.spec_version, v.source_format, v.storage_url,
       v.has_assets, v.assets_count, v.image_path, v.thumbnail_path, v.tokens_total,
       v.has_alt_greetings, v.alt_greetings_count, v.has_lorebook, v.lorebook_entries_count,
       v.has_embedded_images, v.embedded_images_count,
-      u.username as uploader_username, u.display_name as uploader_display_name
+      u.username as uploader_username, u.display_name as uploader_display_name,
+      col.slug as collection_slug, col.name as collection_name
     FROM cards c
     LEFT JOIN card_versions v ON c.head_version_id = v.id
     LEFT JOIN users u ON c.uploader_id = u.id
+    LEFT JOIN collections col ON c.collection_id = col.id
     ${whereClause}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
@@ -220,6 +223,10 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
     updatedAt: row.updated_at,
     // User-specific: only set if userId was provided
     ...(userId && { isFavorited: favoritesSet.has(row.id) }),
+    // v1.2: Collection fields
+    collectionId: row.collection_id,
+    collectionSlug: row.collection_slug,
+    collectionName: row.collection_name,
   }));
 
   return { items, total, page, limit, hasMore: offset + items.length < total };
@@ -239,10 +246,12 @@ export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
       v.has_embedded_images, v.embedded_images_count, v.has_assets, v.assets_count, v.saved_assets,
       v.image_path, v.image_width, v.image_height, v.thumbnail_path, v.thumbnail_width, v.thumbnail_height,
       v.card_data, v.forked_from_id as forked_from_version_id, v.created_at as version_created_at,
-      u.username as uploader_username, u.display_name as uploader_display_name
+      u.username as uploader_username, u.display_name as uploader_display_name,
+      col.slug as collection_slug, col.name as collection_name
     FROM cards c
     LEFT JOIN card_versions v ON c.head_version_id = v.id
     LEFT JOIN users u ON c.uploader_id = u.id
+    LEFT JOIN collections col ON c.collection_id = col.id
     WHERE c.slug = ?
   `;
 
@@ -292,6 +301,10 @@ export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
     cardData, savedAssets, forkedFrom,
     imageWidth: row.image_width, imageHeight: row.image_height,
     versionId: row.version_id, storageUrl: row.storage_url, contentHash: row.content_hash,
+    // v1.2: Collection fields
+    collectionId: row.collection_id,
+    collectionSlug: row.collection_slug,
+    collectionName: row.collection_name,
   };
 }
 
@@ -366,6 +379,9 @@ export interface CreateCardInput {
   uploaderId: string | null;
   visibility?: 'public' | 'private' | 'nsfw_only' | 'unlisted';
   tagSlugs: string[];
+  // v1.2: Collection membership
+  collectionId?: string | null;
+  collectionItemId?: string | null;
   version: {
     storageUrl: string;
     contentHash: string;
@@ -435,8 +451,9 @@ export async function createCard(input: CreateCardInput): Promise<{ cardId: stri
     sql: `
       INSERT INTO cards (
         id, slug, name, description, creator, creator_notes,
-        head_version_id, visibility, uploader_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        head_version_id, visibility, uploader_id,
+        collection_id, collection_item_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     params: [
       input.id,
@@ -447,7 +464,9 @@ export async function createCard(input: CreateCardInput): Promise<{ cardId: stri
       input.creatorNotes,
       versionId, // Set head to this version
       input.visibility || 'public',
-      input.uploaderId
+      input.uploaderId,
+      input.collectionId || null,
+      input.collectionItemId || null
     ]
   });
 

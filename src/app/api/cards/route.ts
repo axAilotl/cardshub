@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCards, createCard, computeContentHash, checkBlockedTags } from '@/lib/db/cards';
-import { parseCard, type ParseResult, type ExtractedAsset } from '@character-foundry/loader';
+import { parseCard } from '@character-foundry/loader';
+import { isVoxta, readVoxta, voxtaToCCv3, type VoxtaData, type VoxtaBook } from '@character-foundry/voxta';
 import { toUint8Array } from '@character-foundry/core';
 import { countCardTokens } from '@/lib/client/tokenizer';
 import { generateThumbnailBuffer } from '@/lib/image/thumbnail';
@@ -16,9 +17,251 @@ import {
   UploadVisibilitySchema,
 } from '@/lib/validations';
 import type { CardFilters } from '@/types/card';
+import {
+  createCollection,
+  getCollectionByPackageId,
+  generateCollectionSlug,
+} from '@/lib/db/collections';
 
 // Use shared utility for counting embedded images
 import { countEmbeddedImages } from '@/lib/card-metadata';
+
+/**
+ * Handle multi-character Voxta package upload (creates collection + cards)
+ */
+async function handleVoxtaCollectionUpload(
+  voxtaData: VoxtaData,
+  buffer: Buffer,
+  uploaderId: string,
+  visibility: 'public' | 'private' | 'nsfw_only' | 'unlisted',
+  tagSlugs: string[]
+): Promise<{ collectionId: string; collectionSlug: string; cardCount: number }> {
+  const pkg = voxtaData.package!;
+
+  // Check if this package already exists (for upgrade detection)
+  if (pkg.Id) {
+    const existing = await getCollectionByPackageId(pkg.Id);
+    if (existing) {
+      // Check date_modified for upgrade
+      if (pkg.DateModified && existing.dateModified) {
+        const newDate = new Date(pkg.DateModified).getTime();
+        const existingDate = new Date(existing.dateModified).getTime();
+        if (newDate <= existingDate) {
+          throw new Error(`Package "${pkg.Name}" already uploaded. Upload a newer version to update.`);
+        }
+      } else {
+        throw new Error(`Package "${pkg.Name}" already exists.`);
+      }
+      // TODO: Implement upgrade flow (create new versions for changed characters)
+      throw new Error('Package upgrade not yet implemented. Delete the existing collection first.');
+    }
+  }
+
+  const collectionId = generateId();
+  const collectionSlug = await generateCollectionSlug(pkg.Name || 'Untitled Collection');
+
+  // Store original .voxpkg
+  const storageUrl = await store(buffer, `collections/${collectionId}.voxpkg`);
+
+  // Find collection thumbnail
+  let thumbnailPath: string | null = null;
+  let thumbnailWidth: number | null = null;
+  let thumbnailHeight: number | null = null;
+
+  // Try to find thumbnail from ThumbnailResource
+  if (pkg.ThumbnailResource?.Id) {
+    const thumbChar = voxtaData.characters.find(c => c.id === pkg.ThumbnailResource!.Id);
+    if (thumbChar?.thumbnail) {
+      const thumbBuffer = Buffer.from(thumbChar.thumbnail as Uint8Array);
+      const thumbName = `collections/${collectionId}_thumb.png`;
+      await store(thumbBuffer, thumbName);
+      thumbnailPath = isCloudflareRuntime()
+        ? `/api/thumb/${thumbName}?type=main`
+        : getPublicUrl(`file:///${thumbName}`);
+      if (thumbBuffer.length > 24) {
+        thumbnailWidth = thumbBuffer.readUInt32BE(16);
+        thumbnailHeight = thumbBuffer.readUInt32BE(20);
+      }
+    }
+  }
+
+  // Fallback: use first character's thumbnail
+  if (!thumbnailPath && voxtaData.characters.length > 0) {
+    const firstChar = voxtaData.characters[0];
+    if (firstChar.thumbnail) {
+      const thumbBuffer = Buffer.from(firstChar.thumbnail as Uint8Array);
+      const thumbName = `collections/${collectionId}_thumb.png`;
+      await store(thumbBuffer, thumbName);
+      thumbnailPath = isCloudflareRuntime()
+        ? `/api/thumb/${thumbName}?type=main`
+        : getPublicUrl(`file:///${thumbName}`);
+      if (thumbBuffer.length > 24) {
+        thumbnailWidth = thumbBuffer.readUInt32BE(16);
+        thumbnailHeight = thumbBuffer.readUInt32BE(20);
+      }
+    }
+  }
+
+  // Determine visibility - if package has ExplicitContent, use nsfw_only unless already set
+  // Map 'private' to 'unlisted' for collections (collections don't support 'private')
+  const mappedVisibility = visibility === 'private' ? 'unlisted' : visibility;
+  const collectionVisibility = pkg.ExplicitContent && mappedVisibility === 'public'
+    ? 'nsfw_only'
+    : mappedVisibility as 'public' | 'nsfw_only' | 'unlisted';
+
+  // Create collection record
+  await createCollection({
+    id: collectionId,
+    slug: collectionSlug,
+    name: pkg.Name || 'Untitled Collection',
+    description: pkg.Description || null,
+    creator: pkg.Creator || null,
+    explicitContent: !!pkg.ExplicitContent,
+    packageId: pkg.Id || null,
+    packageVersion: pkg.Version || null,
+    entryResourceKind: pkg.EntryResource?.Kind || null,
+    entryResourceId: pkg.EntryResource?.Id || null,
+    thumbnailResourceKind: pkg.ThumbnailResource?.Kind || null,
+    thumbnailResourceId: pkg.ThumbnailResource?.Id || null,
+    dateCreated: pkg.DateCreated || null,
+    dateModified: pkg.DateModified || null,
+    storageUrl,
+    thumbnailPath,
+    thumbnailWidth,
+    thumbnailHeight,
+    uploaderId,
+    visibility: collectionVisibility,
+    itemsCount: voxtaData.characters.length,
+  });
+
+  // Create individual cards for each character
+  for (const extractedChar of voxtaData.characters) {
+    // Convert Voxta character to CCv3
+    const referencedBooks = extractedChar.data.MemoryBooks
+      ? voxtaData.books
+          .filter(b => extractedChar.data.MemoryBooks?.includes(b.id))
+          .map(b => b.data)
+      : [];
+    const ccv3 = voxtaToCCv3(extractedChar.data, referencedBooks);
+    const cardData = ccv3.data;
+
+    // Generate card IDs
+    const cardId = generateId();
+    const cardSlug = generateSlug(cardData.name || 'Unknown');
+
+    // Calculate tokens
+    const tokens = countCardTokens(cardData);
+
+    // Count embedded images
+    const embeddedImages = countEmbeddedImages([
+      cardData.description,
+      cardData.first_mes,
+      ...(cardData.alternate_greetings || []),
+      cardData.mes_example,
+      cardData.creator_notes || '',
+    ]);
+
+    // Find character thumbnail
+    let charImagePath: string | null = null;
+    let charImageWidth: number | null = null;
+    let charImageHeight: number | null = null;
+    let charThumbPath: string | null = null;
+    let charThumbWidth: number | null = null;
+    let charThumbHeight: number | null = null;
+
+    // Use the character's thumbnail field (extracted by readVoxta)
+    if (extractedChar.thumbnail) {
+      const imgBuffer = Buffer.from(extractedChar.thumbnail as Uint8Array);
+      const imageName = `${cardId}.png`;
+      await store(imgBuffer, imageName);
+
+      charImagePath = isCloudflareRuntime()
+        ? getPublicUrl(`r2://${imageName}`)
+        : getPublicUrl(`file:///${imageName}`);
+
+      if (imgBuffer.length > 24) {
+        charImageWidth = imgBuffer.readUInt32BE(16);
+        charImageHeight = imgBuffer.readUInt32BE(20);
+      }
+
+      // Generate thumbnail
+      if (isCloudflareRuntime()) {
+        charThumbPath = `/api/thumb/${imageName}?type=main`;
+        const isLandscape = charImageWidth && charImageHeight && charImageWidth > charImageHeight;
+        charThumbWidth = isLandscape ? 750 : 500;
+        charThumbHeight = isLandscape
+          ? Math.round((charImageHeight! * 750) / charImageWidth!)
+          : Math.round((charImageHeight! * 500) / charImageWidth!);
+      } else {
+        try {
+          const thumbResult = await generateThumbnailBuffer(imgBuffer, 'main');
+          const thumbName = `thumbnails/${cardId}.webp`;
+          await store(thumbResult.buffer, thumbName);
+          charThumbPath = getPublicUrl(`file:///${thumbName}`);
+          charThumbWidth = thumbResult.width;
+          charThumbHeight = thumbResult.height;
+        } catch {
+          charThumbPath = `/api/thumb/${imageName}?type=main`;
+          charThumbWidth = 500;
+          charThumbHeight = 750;
+        }
+      }
+    }
+
+    // Determine card visibility (inherit from collection)
+    const cardVisibility = extractedChar.data.ExplicitContent && collectionVisibility === 'public'
+      ? 'nsfw_only'
+      : collectionVisibility;
+
+    // Combine tags: character tags + user tags + "collection" tag
+    const charTags = cardData.tags || [];
+    const allTags = [...new Set([...charTags, ...tagSlugs, 'collection'])];
+
+    // Create card with collection reference
+    await createCard({
+      id: cardId,
+      slug: cardSlug,
+      name: cardData.name || 'Unknown',
+      description: cardData.description || null,
+      creator: cardData.creator || null,
+      creatorNotes: cardData.creator_notes || null,
+      uploaderId,
+      visibility: cardVisibility,
+      tagSlugs: allTags,
+      collectionId,
+      collectionItemId: extractedChar.id,
+      version: {
+        storageUrl, // Points to the collection's .voxpkg
+        contentHash: computeContentHash(Buffer.from(JSON.stringify(cardData))),
+        specVersion: 'v3',
+        sourceFormat: 'voxta',
+        tokens,
+        hasAltGreetings: (cardData.alternate_greetings?.length || 0) > 0,
+        altGreetingsCount: cardData.alternate_greetings?.length || 0,
+        hasLorebook: !!(cardData.character_book?.entries?.length),
+        lorebookEntriesCount: cardData.character_book?.entries?.length || 0,
+        hasEmbeddedImages: embeddedImages > 0,
+        embeddedImagesCount: embeddedImages,
+        hasAssets: (extractedChar.assets?.length || 0) > 0,
+        assetsCount: extractedChar.assets?.length || 0,
+        savedAssets: null,
+        imagePath: charImagePath,
+        imageWidth: charImageWidth,
+        imageHeight: charImageHeight,
+        thumbnailPath: charThumbPath,
+        thumbnailWidth: charThumbWidth,
+        thumbnailHeight: charThumbHeight,
+        cardData: JSON.stringify(ccv3),
+      },
+    });
+  }
+
+  return {
+    collectionId,
+    collectionSlug,
+    cardCount: voxtaData.characters.length,
+  };
+}
 
 /**
  * Client-provided metadata structure
@@ -157,6 +400,53 @@ export async function POST(request: NextRequest) {
     // Read file buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    const uint8Buffer = toUint8Array(buffer);
+
+    // Helper to try Voxta parsing (used for both detection and fallback)
+    // Returns: response if handled, 'single' if single-char Voxta (needs voxtaData), null if not Voxta
+    let voxtaDataForSingleChar: VoxtaData | null = null;
+    const tryVoxtaParsing = async (): Promise<NextResponse | 'single' | null> => {
+      try {
+        const voxtaData = readVoxta(uint8Buffer, { maxFileSize: 50 * 1024 * 1024 });
+
+        // If 2+ characters, create a collection
+        if (voxtaData.characters.length >= 2 && voxtaData.package) {
+          const result = await handleVoxtaCollectionUpload(
+            voxtaData,
+            buffer,
+            session.user.id,
+            visibility as 'public' | 'private' | 'nsfw_only' | 'unlisted',
+            tagSlugs
+          );
+
+          return NextResponse.json({
+            success: true,
+            type: 'collection',
+            data: {
+              id: result.collectionId,
+              slug: result.collectionSlug,
+              cardCount: result.cardCount,
+            },
+          });
+        }
+        // Single character Voxta - save data for later processing
+        if (voxtaData.characters.length === 1) {
+          voxtaDataForSingleChar = voxtaData;
+          return 'single';
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    // Check for Voxta package (quick detection first, then fallback)
+    let isVoxtaPackage = false;
+    if (isVoxta(uint8Buffer)) {
+      const voxtaResponse = await tryVoxtaParsing();
+      if (voxtaResponse instanceof NextResponse) return voxtaResponse;
+      if (voxtaResponse === 'single') isVoxtaPackage = true;
+    }
 
     // Check for client-provided metadata (client-side parsing)
     let clientMetadata: ClientMetadata | null = null;
@@ -172,7 +462,9 @@ export async function POST(request: NextRequest) {
     const contentHash = clientMetadata?.contentHash || computeContentHash(buffer);
 
     // Parse card data - use client metadata if available, otherwise parse server-side
-    let parsedCard: {
+    // Definite assignment assertion: parsedCard is always assigned before use
+    // (either by Voxta handling, parseCard success, or Voxta fallback - other paths throw)
+    let parsedCard!: {
       name: string;
       description: string;
       creator: string;
@@ -187,47 +479,19 @@ export async function POST(request: NextRequest) {
     let mainImage: Buffer | undefined;
     let extractedAssets: Array<{ name: string; type: string; ext: string; buffer: Buffer; path?: string }> = [];
 
-    // Parse card using character-foundry loader
-    const parseResult = parseCard(toUint8Array(buffer), { extractAssets: true });
-    const cardData = parseResult.card.data;
-
-    // Find main image from assets
-    // loader 0.1.1+ provides isMain icon with tEXt chunks stripped (clean PNG for thumbnails)
-    const mainAsset = parseResult.assets.find(a => a.isMain && a.type === 'icon');
-    if (mainAsset?.data) {
-      mainImage = Buffer.from(mainAsset.data as Uint8Array);
-    }
-
-    // Convert non-main assets to our format
-    extractedAssets = parseResult.assets
-      .filter(a => !a.isMain || a.type !== 'icon')
-      .map(a => ({
-        name: a.name,
-        type: a.type,
-        ext: a.ext,
-        buffer: Buffer.from(a.data as Uint8Array),
-        path: a.path,
-      }));
-
-    if (clientMetadata) {
-      // Use client-parsed metadata (reduces server CPU usage)
-      parsedCard = {
-        name: clientMetadata.name,
-        description: clientMetadata.description,
-        creator: clientMetadata.creator,
-        creatorNotes: clientMetadata.creatorNotes,
-        specVersion: clientMetadata.specVersion,
-        sourceFormat: clientMetadata.sourceFormat,
-        tokens: clientMetadata.tokens,
-        metadata: clientMetadata.metadata,
-        tags: clientMetadata.tags,
-        raw: JSON.parse(clientMetadata.cardData),
-      };
-    } else {
-      // Full server-side parsing (fallback for clients without JS)
+    // Handle single-character Voxta package
+    if (isVoxtaPackage && voxtaDataForSingleChar) {
+      // Type assertion needed because TS can't track closure state through async functions
+      const voxtaData = voxtaDataForSingleChar as VoxtaData;
+      const extractedChar = voxtaData.characters[0];
+      const referencedBooks: VoxtaBook[] = extractedChar.data.MemoryBooks
+        ? voxtaData.books
+            .filter(b => extractedChar.data.MemoryBooks?.includes(b.id))
+            .map(b => b.data)
+        : [];
+      const ccv3 = voxtaToCCv3(extractedChar.data, referencedBooks);
+      const cardData = ccv3.data;
       const tokens = countCardTokens(cardData);
-
-      // Count embedded images
       const embeddedImages = countEmbeddedImages([
         cardData.description,
         cardData.first_mes,
@@ -236,16 +500,13 @@ export async function POST(request: NextRequest) {
         cardData.creator_notes || '',
       ]);
 
-      // Map container format to source format
-      const sourceFormat = parseResult.containerFormat === 'unknown' ? 'json' : parseResult.containerFormat;
-
       parsedCard = {
         name: cardData.name || 'Unknown',
         description: cardData.description || '',
         creator: cardData.creator || '',
         creatorNotes: cardData.creator_notes || '',
-        specVersion: parseResult.spec === 'v3' ? 'v3' : 'v2',
-        sourceFormat: sourceFormat as 'png' | 'json' | 'charx' | 'voxta',
+        specVersion: 'v3',
+        sourceFormat: 'voxta',
         tokens,
         metadata: {
           hasAlternateGreetings: (cardData.alternate_greetings?.length || 0) > 0,
@@ -256,8 +517,157 @@ export async function POST(request: NextRequest) {
           embeddedImagesCount: embeddedImages,
         },
         tags: cardData.tags || [],
-        raw: parseResult.card,
+        raw: ccv3,
       };
+
+      // Get thumbnail from Voxta character
+      if (extractedChar.thumbnail) {
+        mainImage = Buffer.from(extractedChar.thumbnail as Uint8Array);
+      }
+    } else {
+      // Parse card using character-foundry loader
+      // Wrap in try/catch to handle unrecognized formats (fallback to Voxta for ZIPs)
+      let parseResult;
+      try {
+        parseResult = parseCard(uint8Buffer, { extractAssets: true });
+      } catch (parseError) {
+        // If parseCard fails with unrecognized ZIP, try Voxta as fallback
+        // This handles cases where isVoxta() quick detection missed a valid .voxpkg
+        const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
+        if (errorMessage.includes('ZIP archive without recognized card structure')) {
+          const voxtaResponse = await tryVoxtaParsing();
+          if (voxtaResponse instanceof NextResponse) return voxtaResponse;
+          if (voxtaResponse === 'single' && voxtaDataForSingleChar) {
+            // Retry with the single-char Voxta handling
+            // This is a bit awkward but avoids code duplication
+            isVoxtaPackage = true;
+            // Type assertion needed because TS can't track closure state through async functions
+            const voxtaData = voxtaDataForSingleChar as VoxtaData;
+            const extractedChar = voxtaData.characters[0];
+            const referencedBooks: VoxtaBook[] = extractedChar.data.MemoryBooks
+              ? voxtaData.books
+                  .filter(b => extractedChar.data.MemoryBooks?.includes(b.id))
+                  .map(b => b.data)
+              : [];
+            const ccv3 = voxtaToCCv3(extractedChar.data, referencedBooks);
+            const cardDataFromVoxta = ccv3.data;
+            const tokens = countCardTokens(cardDataFromVoxta);
+            const embeddedImages = countEmbeddedImages([
+              cardDataFromVoxta.description,
+              cardDataFromVoxta.first_mes,
+              ...(cardDataFromVoxta.alternate_greetings || []),
+              cardDataFromVoxta.mes_example,
+              cardDataFromVoxta.creator_notes || '',
+            ]);
+
+            parsedCard = {
+              name: cardDataFromVoxta.name || 'Unknown',
+              description: cardDataFromVoxta.description || '',
+              creator: cardDataFromVoxta.creator || '',
+              creatorNotes: cardDataFromVoxta.creator_notes || '',
+              specVersion: 'v3',
+              sourceFormat: 'voxta',
+              tokens,
+              metadata: {
+                hasAlternateGreetings: (cardDataFromVoxta.alternate_greetings?.length || 0) > 0,
+                alternateGreetingsCount: cardDataFromVoxta.alternate_greetings?.length || 0,
+                hasLorebook: !!(cardDataFromVoxta.character_book?.entries?.length),
+                lorebookEntriesCount: cardDataFromVoxta.character_book?.entries?.length || 0,
+                hasEmbeddedImages: embeddedImages > 0,
+                embeddedImagesCount: embeddedImages,
+              },
+              tags: cardDataFromVoxta.tags || [],
+              raw: ccv3,
+            };
+
+            if (extractedChar.thumbnail) {
+              mainImage = Buffer.from(extractedChar.thumbnail as Uint8Array);
+            }
+            // Skip the rest of parseCard handling
+            // Jump to ID generation (handled below after if/else)
+          } else {
+            // Re-throw if not a Voxta package or Voxta parsing also failed
+            throw parseError;
+          }
+        } else {
+          throw parseError;
+        }
+      }
+
+      // Only process parseResult if we didn't handle Voxta above
+      if (parseResult) {
+        const cardData = parseResult.card.data;
+
+        // Find main image from assets
+        // loader 0.1.1+ provides isMain icon with tEXt chunks stripped (clean PNG for thumbnails)
+        // For V2 cards without assets, mainImage will be undefined - that's OK, upload proceeds without image
+        const mainAsset = parseResult.assets.find(a => a.isMain && a.type === 'icon');
+        if (mainAsset?.data) {
+          mainImage = Buffer.from(mainAsset.data as Uint8Array);
+        }
+
+        // Convert non-main assets to our format
+        extractedAssets = parseResult.assets
+          .filter(a => !a.isMain || a.type !== 'icon')
+          .map(a => ({
+            name: a.name,
+            type: a.type,
+            ext: a.ext,
+            buffer: Buffer.from(a.data as Uint8Array),
+            path: a.path,
+          }));
+
+        if (clientMetadata) {
+          // Use client-parsed metadata (reduces server CPU usage)
+          parsedCard = {
+            name: clientMetadata.name,
+            description: clientMetadata.description,
+            creator: clientMetadata.creator,
+            creatorNotes: clientMetadata.creatorNotes,
+            specVersion: clientMetadata.specVersion,
+            sourceFormat: clientMetadata.sourceFormat,
+            tokens: clientMetadata.tokens,
+            metadata: clientMetadata.metadata,
+            tags: clientMetadata.tags,
+            raw: JSON.parse(clientMetadata.cardData),
+          };
+        } else {
+          // Full server-side parsing (fallback for clients without JS)
+          const tokens = countCardTokens(cardData);
+
+          // Count embedded images
+          const embeddedImages = countEmbeddedImages([
+            cardData.description,
+            cardData.first_mes,
+            ...(cardData.alternate_greetings || []),
+            cardData.mes_example,
+            cardData.creator_notes || '',
+          ]);
+
+          // Map container format to source format
+          const sourceFormat = parseResult.containerFormat === 'unknown' ? 'json' : parseResult.containerFormat;
+
+          parsedCard = {
+            name: cardData.name || 'Unknown',
+            description: cardData.description || '',
+            creator: cardData.creator || '',
+            creatorNotes: cardData.creator_notes || '',
+            specVersion: parseResult.spec === 'v3' ? 'v3' : 'v2',
+            sourceFormat: sourceFormat as 'png' | 'json' | 'charx' | 'voxta',
+            tokens,
+            metadata: {
+              hasAlternateGreetings: (cardData.alternate_greetings?.length || 0) > 0,
+              alternateGreetingsCount: cardData.alternate_greetings?.length || 0,
+              hasLorebook: !!(cardData.character_book?.entries?.length),
+              lorebookEntriesCount: cardData.character_book?.entries?.length || 0,
+              hasEmbeddedImages: embeddedImages > 0,
+              embeddedImagesCount: embeddedImages,
+            },
+            tags: cardData.tags || [],
+            raw: parseResult.card,
+          };
+        }
+      }
     }
 
     // Generate IDs

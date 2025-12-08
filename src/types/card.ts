@@ -244,6 +244,11 @@ export interface CardListItem {
 
   // Feed-specific (optional, used by /api/feed)
   feedReason?: 'followed_user' | 'followed_tag' | 'trending';
+
+  // v1.2: Collection membership
+  collectionId?: string | null;
+  collectionSlug?: string | null;
+  collectionName?: string | null;
 }
 
 // Saved asset from extracted packages (charx/voxta)

@@ -129,6 +129,7 @@ export function parseFromBufferWithAssets(buffer: Uint8Array, filename?: string)
 
   // Find main image from isMain icon asset
   // loader 0.1.1+ provides isMain icon with tEXt chunks stripped (clean PNG for thumbnails)
+  // For V2 cards without assets, mainImage will be undefined - that's OK
   let mainImage: Uint8Array | undefined;
   const mainAsset = result.assets.find(a => a.isMain && a.type === 'icon');
   if (mainAsset?.data) {
