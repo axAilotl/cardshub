@@ -105,7 +105,7 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
             fill
             className={cn(
               'object-cover transition-all duration-300 group-hover:scale-105',
-              shouldBlur && 'blur-xl hover:blur-none'
+              shouldBlur && 'blur-xl'
             )}
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
           />

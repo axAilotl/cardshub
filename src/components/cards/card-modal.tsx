@@ -112,7 +112,7 @@ export function CardModal({ card, isOpen, onClose }: CardModalProps) {
                 fill
                 className={cn(
                   'object-cover rounded-t-2xl lg:rounded-l-2xl lg:rounded-tr-none transition-all duration-300',
-                  shouldBlur && 'blur-xl group-hover:blur-none'
+                  shouldBlur && 'blur-xl'
                 )}
               />
             ) : (

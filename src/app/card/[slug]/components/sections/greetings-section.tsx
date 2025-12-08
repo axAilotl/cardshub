@@ -35,7 +35,7 @@ export function GreetingsSection({ firstMessage, alternateGreetings, firstMessag
           </div>
           <div className={cn(
             'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
-            shouldBlur && 'blur-md group-hover:blur-none select-none group-hover:select-auto'
+            shouldBlur && 'blur-md select-none'
           )}>
             {renderTextWithImages(firstMessage, { centered: true, halfSize: true })}
           </div>
@@ -51,7 +51,7 @@ export function GreetingsSection({ firstMessage, alternateGreetings, firstMessag
             </div>
             <div className={cn(
               'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
-              shouldBlur && 'blur-md group-hover:blur-none select-none group-hover:select-auto'
+              shouldBlur && 'blur-md select-none'
             )}>
               {renderTextWithImages(greeting, { centered: true, halfSize: true })}
             </div>

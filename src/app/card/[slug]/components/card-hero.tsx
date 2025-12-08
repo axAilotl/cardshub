@@ -207,7 +207,7 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
                 fill
                 className={cn(
                   'object-cover transition-all duration-300',
-                  shouldBlur && 'blur-xl group-hover:blur-none'
+                  shouldBlur && 'blur-xl'
                 )}
                 priority
               />

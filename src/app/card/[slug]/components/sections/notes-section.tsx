@@ -27,7 +27,7 @@ export function NotesSection({ creatorNotes, isNsfw }: NotesSectionProps) {
     processedNotes = convertMarkdownImagesToHtml(processedNotes);
   }
 
-  const blurClasses = shouldBlur ? 'blur-md hover:blur-none select-none hover:select-auto transition-all duration-300' : '';
+  const blurClasses = shouldBlur ? 'blur-md select-none' : '';
 
   return (
     <div className="group">
