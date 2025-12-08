@@ -44,6 +44,17 @@ Key shared components:
 
 When an API needs to return card data, use the `getCardsByIds()` helper from `src/lib/db/cards.ts` to ensure consistent `CardListItem` shape.
 
+## CRITICAL: UX Principles
+
+**NEVER use hover states to bypass security/privacy features.**
+
+Examples of what NOT to do:
+- `hover:blur-none` on NSFW blurred content (defeats the purpose of the blur)
+- `hover:opacity-100` on hidden sensitive info
+- Any hover interaction that reveals content meant to be gated
+
+Content gating should require explicit user action (settings toggle, click to reveal, etc.).
+
 ## Project Overview
 
 CardsHub is a platform for sharing, discovering, and managing AI character cards (CCv2/CCv3 format). It's a clone of Wyvern.chat's explore functionality built with Next.js 15.
