@@ -102,12 +102,8 @@ async function handleVoxtaCollectionUpload(
     }
   }
 
-  // Determine visibility - if package has ExplicitContent, use nsfw_only unless already set
   // Map 'private' to 'unlisted' for collections (collections don't support 'private')
-  const mappedVisibility = visibility === 'private' ? 'unlisted' : visibility;
-  const collectionVisibility = pkg.ExplicitContent && mappedVisibility === 'public'
-    ? 'nsfw_only'
-    : mappedVisibility as 'public' | 'nsfw_only' | 'unlisted';
+  const collectionVisibility = visibility === 'private' ? 'unlisted' : visibility;
 
   // Create collection record
   await createCollection({
@@ -210,10 +206,8 @@ async function handleVoxtaCollectionUpload(
       }
     }
 
-    // Determine card visibility (inherit from collection)
-    const cardVisibility = extractedChar.data.ExplicitContent && collectionVisibility === 'public'
-      ? 'nsfw_only'
-      : collectionVisibility;
+    // Cards inherit visibility from collection
+    const cardVisibility = collectionVisibility;
 
     // Combine tags: character tags + user tags + "collection" tag
     const charTags = cardData.tags || [];

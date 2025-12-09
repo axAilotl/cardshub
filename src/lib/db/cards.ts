@@ -57,12 +57,11 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
   const params: (string | number)[] = [];
   const conditions: string[] = [];
 
-  // Visibility filter
-  const allowedVisibility = includeNsfw ? ['public', 'nsfw_only'] : visibility;
-  if (allowedVisibility.length > 0) {
-    const visPlaceholders = allowedVisibility.map(() => '?').join(', ');
+  // Visibility filter - only show public cards (unlisted/private require direct link)
+  if (visibility.length > 0) {
+    const visPlaceholders = visibility.map(() => '?').join(', ');
     conditions.push(`c.visibility IN (${visPlaceholders})`);
-    params.push(...allowedVisibility);
+    params.push(...visibility);
   }
 
   conditions.push(`c.moderation_state != 'blocked'`);
