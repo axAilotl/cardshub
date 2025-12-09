@@ -104,23 +104,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Original format download - return the stored file as-is
+    // For collection cards (voxta source), "original" downloads the individual card as PNG
+    // because the storage_url points to the whole collection package
     if (format === 'original' && version?.storage_url) {
-      const fileBuffer = await getFileFromStorage(version.storage_url);
-      if (fileBuffer) {
-        const ext = version.storage_url.split('.').pop()?.toLowerCase() || 'bin';
-        const mimeTypes: Record<string, string> = {
-          'png': 'image/png',
-          'charx': 'application/octet-stream',
-          'voxpkg': 'application/octet-stream',
-          'json': 'application/json',
-        };
-        return new NextResponse(new Uint8Array(fileBuffer), {
-          headers: {
-            'Content-Type': mimeTypes[ext] || 'application/octet-stream',
-            'Content-Disposition': `attachment; filename="${card.slug}.${ext}"`,
-          },
-        });
+      const ext = version.storage_url.split('.').pop()?.toLowerCase() || 'bin';
+
+      // For voxta collection cards, fall through to PNG download
+      // (storage_url points to the whole .voxpkg, not individual character)
+      if (ext !== 'voxpkg') {
+        const fileBuffer = await getFileFromStorage(version.storage_url);
+        if (fileBuffer) {
+          const mimeTypes: Record<string, string> = {
+            'png': 'image/png',
+            'charx': 'application/octet-stream',
+            'json': 'application/json',
+          };
+          return new NextResponse(new Uint8Array(fileBuffer), {
+            headers: {
+              'Content-Type': mimeTypes[ext] || 'application/octet-stream',
+              'Content-Disposition': `attachment; filename="${card.slug}.${ext}"`,
+            },
+          });
+        }
       }
+      // voxpkg falls through to PNG download below
     }
 
     // PNG download - try to get stored file first
