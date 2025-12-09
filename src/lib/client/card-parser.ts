@@ -2,6 +2,7 @@
  * Client-side card parser using character-foundry packages
  */
 import { parseCard, type ParseResult, type ExtractedAsset as FoundryAsset } from '@character-foundry/loader';
+import { isVoxta, readVoxta } from '@character-foundry/voxta';
 import { toUint8Array } from '@character-foundry/core';
 import type { CCv3Data, CCv3CharacterBook } from '@character-foundry/schemas';
 import { countCardTokens, type TokenCounts } from './tokenizer';
@@ -51,6 +52,12 @@ export interface ParseResultWithAssets {
   card: ParsedCard;
   extractedAssets: ExtractedAsset[];
   mainImage?: Uint8Array;
+  /** True if this is a multi-character Voxta package (server handles as collection) */
+  isMultiCharPackage?: boolean;
+  /** Number of characters in package (for multi-char Voxta) */
+  packageCharCount?: number;
+  /** Package name (for multi-char Voxta) */
+  packageName?: string;
 }
 
 // Use shared utility for counting embedded images
@@ -123,6 +130,41 @@ export function parseFromBuffer(buffer: Uint8Array, filename?: string): ParsedCa
  */
 export function parseFromBufferWithAssets(buffer: Uint8Array, filename?: string): ParseResultWithAssets {
   const uint8 = toUint8Array(buffer);
+
+  // Check for multi-character Voxta package FIRST
+  // These need special handling - server creates a collection instead of single card
+  if (isVoxta(uint8)) {
+    try {
+      const voxtaData = readVoxta(uint8, { maxFileSize: 50 * 1024 * 1024 });
+      if (voxtaData.characters.length >= 2 && voxtaData.package) {
+        // Multi-char package - return minimal info, let server handle it
+        // We still parse the first char for preview purposes
+        const result = parseCard(uint8, { extractAssets: true });
+        const card = toParsedCard(result);
+
+        // Get main image from first character
+        let mainImage: Uint8Array | undefined;
+        const mainAsset = result.assets.find(a => a.isMain && a.type === 'icon');
+        if (mainAsset?.data) {
+          mainImage = mainAsset.data instanceof Uint8Array
+            ? mainAsset.data
+            : new Uint8Array(mainAsset.data as ArrayBuffer);
+        }
+
+        return {
+          card,
+          extractedAssets: [],
+          mainImage,
+          isMultiCharPackage: true,
+          packageCharCount: voxtaData.characters.length,
+          packageName: voxtaData.package.Name,
+        };
+      }
+    } catch {
+      // Fall through to normal parsing
+    }
+  }
+
   const result = parseCard(uint8, { extractAssets: true });
 
   const card = toParsedCard(result);

@@ -144,28 +144,35 @@ export default function UploadPage() {
       // Compute content hash client-side
       const contentHash = await computeContentHash(buffer);
 
-      // Prepare parsed metadata to send with the file
-      const { card } = parseState.result;
-      const metadata = {
-        name: card.name,
-        description: card.description,
-        creator: card.creator,
-        creatorNotes: card.creatorNotes,
-        specVersion: card.specVersion,
-        sourceFormat: card.sourceFormat,
-        tokens: card.tokens,
-        metadata: card.metadata,
-        tags: card.tags,
-        contentHash,
-        visibility,
-        // Send the raw card JSON for storage
-        cardData: JSON.stringify(card.raw),
-      };
-
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('metadata', JSON.stringify(metadata));
-      formData.append('tags', JSON.stringify(card.tags));
+
+      // For multi-char packages, DON'T send metadata - let server handle everything
+      // This ensures server uses readVoxta to create a collection with all characters
+      if (!parseState.result.isMultiCharPackage) {
+        // Prepare parsed metadata to send with the file
+        const { card } = parseState.result;
+        const metadata = {
+          name: card.name,
+          description: card.description,
+          creator: card.creator,
+          creatorNotes: card.creatorNotes,
+          specVersion: card.specVersion,
+          sourceFormat: card.sourceFormat,
+          tokens: card.tokens,
+          metadata: card.metadata,
+          tags: card.tags,
+          contentHash,
+          visibility,
+          // Send the raw card JSON for storage
+          cardData: JSON.stringify(card.raw),
+        };
+        formData.append('metadata', JSON.stringify(metadata));
+        formData.append('tags', JSON.stringify(card.tags));
+      } else {
+        // Just send visibility for multi-char packages
+        formData.append('visibility', visibility);
+      }
 
       // Use XMLHttpRequest for upload progress tracking
       setUploadStage('uploading');
@@ -216,8 +223,13 @@ export default function UploadPage() {
         xhr.send(formData);
       });
 
-      // Redirect to the new card page
-      router.push(`/card/${result.data.slug}`);
+      // Redirect to the new card or collection page
+      if (parseState.result.isMultiCharPackage) {
+        // Collection response has type: 'collection'
+        router.push(`/collection/${result.data.slug}`);
+      } else {
+        router.push(`/card/${result.data.slug}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
       setUploadStage(null);
@@ -297,20 +309,34 @@ export default function UploadPage() {
 
               {parseState.status === 'parsed' && parsedCard && (
                 <div className="space-y-3">
+                  {/* Multi-char package notice */}
+                  {parseState.result?.isMultiCharPackage && (
+                    <div className="bg-nebula/20 border border-nebula/50 rounded-lg px-4 py-2 text-sm">
+                      <span className="font-semibold text-nebula">Collection Package:</span>{' '}
+                      <span className="text-starlight">
+                        {parseState.result.packageName} ({parseState.result.packageCharCount} characters)
+                      </span>
+                    </div>
+                  )}
+
                   <div className="flex gap-2 justify-center flex-wrap">
                     <Badge variant={
                       file.name.endsWith('.png') ? 'success' :
                       file.name.endsWith('.charx') ? 'warning' :
                       file.name.endsWith('.voxpkg') ? 'info' : 'outline'
                     }>
-                      {parsedCard.sourceFormat.toUpperCase()}
+                      {parseState.result?.isMultiCharPackage ? 'VOXPKG COLLECTION' : parsedCard.sourceFormat.toUpperCase()}
                     </Badge>
-                    <Badge variant="outline">
-                      CC{parsedCard.specVersion}
-                    </Badge>
-                    <Badge variant="outline">
-                      {parsedCard.tokens.total.toLocaleString()} tokens
-                    </Badge>
+                    {!parseState.result?.isMultiCharPackage && (
+                      <>
+                        <Badge variant="outline">
+                          CC{parsedCard.specVersion}
+                        </Badge>
+                        <Badge variant="outline">
+                          {parsedCard.tokens.total.toLocaleString()} tokens
+                        </Badge>
+                      </>
+                    )}
                   </div>
 
                   {/* Token breakdown */}
