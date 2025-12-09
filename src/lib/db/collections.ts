@@ -2,7 +2,7 @@
  * Collections database operations
  */
 
-import { getDb } from './index';
+import { getDatabase } from './async-db';
 import { generateSlug } from '../utils';
 import type {
   Collection,
@@ -17,7 +17,7 @@ import type { CardListItem, PaginatedResponse } from '@/types/card';
  * Get a collection by slug
  */
 export async function getCollectionBySlug(slug: string): Promise<CollectionDetail | null> {
-  const db = await getDb();
+  const db = await getDatabase();
 
   const row = await db.prepare(`
     SELECT
@@ -192,7 +192,7 @@ export async function getCollectionBySlug(slug: string): Promise<CollectionDetai
  * Get a collection by package ID (for upgrade detection)
  */
 export async function getCollectionByPackageId(packageId: string): Promise<Collection | null> {
-  const db = await getDb();
+  const db = await getDatabase();
 
   const row = await db.prepare(`
     SELECT * FROM collections WHERE package_id = ?
@@ -209,7 +209,7 @@ export async function getCollectionByPackageId(packageId: string): Promise<Colle
 export async function getCollections(
   filters: CollectionFilters = {}
 ): Promise<PaginatedResponse<CollectionListItem>> {
-  const db = await getDb();
+  const db = await getDatabase();
 
   const {
     page = 1,
@@ -306,7 +306,7 @@ export async function getCollections(
  * Create a new collection
  */
 export async function createCollection(input: CreateCollectionInput): Promise<string> {
-  const db = await getDb();
+  const db = await getDatabase();
   const now = Math.floor(Date.now() / 1000);
 
   await db.prepare(`
@@ -360,7 +360,7 @@ export async function updateCollection(
     'thumbnailPath' | 'thumbnailWidth' | 'thumbnailHeight' | 'itemsCount'
   >>
 ): Promise<void> {
-  const db = await getDb();
+  const db = await getDatabase();
   const now = Math.floor(Date.now() / 1000);
 
   const setClauses: string[] = ['updated_at = ?'];
@@ -422,7 +422,7 @@ export async function updateCollection(
  * Increment download count for a collection
  */
 export async function incrementCollectionDownloads(id: string): Promise<void> {
-  const db = await getDb();
+  const db = await getDatabase();
 
   await db.prepare(`
     UPDATE collections SET downloads_count = downloads_count + 1 WHERE id = ?
@@ -433,7 +433,7 @@ export async function incrementCollectionDownloads(id: string): Promise<void> {
  * Delete a collection
  */
 export async function deleteCollection(id: string): Promise<void> {
-  const db = await getDb();
+  const db = await getDatabase();
 
   // First unlink all cards from this collection
   await db.prepare(`
@@ -451,7 +451,7 @@ export async function updateCollectionVisibility(
   id: string,
   visibility: 'public' | 'nsfw_only' | 'unlisted' | 'blocked'
 ): Promise<void> {
-  const db = await getDb();
+  const db = await getDatabase();
   const now = Math.floor(Date.now() / 1000);
 
   await db.prepare(`
@@ -463,7 +463,7 @@ export async function updateCollectionVisibility(
  * Generate a unique slug for a collection
  */
 export async function generateCollectionSlug(name: string): Promise<string> {
-  const db = await getDb();
+  const db = await getDatabase();
   const baseSlug = generateSlug(name);
 
   // Check if slug exists

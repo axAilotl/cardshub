@@ -146,16 +146,20 @@ function wrapD1(db: D1Database): AsyncDb {
  * Get async database for local development (better-sqlite3)
  * This function should NEVER be called on Cloudflare Workers.
  */
-export function getAsyncDb(): AsyncDb {
+export async function getAsyncDb(): Promise<AsyncDb> {
   if (localDbInstance) return localDbInstance;
 
-  // Use new Function to completely hide the require from static analysis
-  // This is more robust than eval('require') for hiding from bundlers
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const dynamicRequire = new Function('moduleName', 'return require(moduleName)');
-  const Database = dynamicRequire('better-sqlite3');
-  const { readFileSync } = dynamicRequire('fs');
-  const { join } = dynamicRequire('path');
+  // Dynamic import for Node.js modules - works better with Next.js bundling
+  // These imports only run on the server side (Node.js runtime)
+  const [betterSqlite, fsModule, pathModule] = await Promise.all([
+    import('better-sqlite3'),
+    import('fs'),
+    import('path'),
+  ]);
+
+  const Database = betterSqlite.default;
+  const { readFileSync } = fsModule;
+  const { join } = pathModule;
 
   const dbPath = process.env.DATABASE_PATH || join(process.cwd(), 'cardshub.db');
   const db = new Database(dbPath);
@@ -210,6 +214,6 @@ export async function getDatabase(): Promise<AsyncDb> {
     cachedD1Db = wrapD1(d1);
     return cachedD1Db;
   }
-  // Local development with better-sqlite3
-  return getAsyncDb();
+  // Local development with better-sqlite3 (now async)
+  return await getAsyncDb();
 }

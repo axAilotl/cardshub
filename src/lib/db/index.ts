@@ -200,19 +200,22 @@ export function isCloudflareRuntime(): boolean {
 /**
  * Get database for local development (better-sqlite3)
  * Returns sync API
- * @deprecated Use getAsyncDb() instead
+ * @deprecated Use getDatabase() from ./async-db instead
  * This function should NEVER be called on Cloudflare Workers.
  */
-export function getDb(): UnifiedDb {
+export async function getDb(): Promise<UnifiedDb> {
   if (localDb) return localDb;
 
-  // Use new Function to completely hide the require from static analysis
-  // This is more robust than eval('require') for hiding from bundlers
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const dynamicRequire = new Function('moduleName', 'return require(moduleName)');
-  const Database = dynamicRequire('better-sqlite3');
-  const { readFileSync } = dynamicRequire('fs');
-  const { join } = dynamicRequire('path');
+  // Dynamic import for Node.js modules - works with Next.js bundling
+  const [betterSqlite, fsModule, pathModule] = await Promise.all([
+    import('better-sqlite3'),
+    import('fs'),
+    import('path'),
+  ]);
+
+  const Database = betterSqlite.default;
+  const { readFileSync } = fsModule;
+  const { join } = pathModule;
 
   const dbPath = process.env.DATABASE_PATH || join(process.cwd(), 'cardshub.db');
   const sqlite = new Database(dbPath);
@@ -232,7 +235,7 @@ export function getDb(): UnifiedDb {
   return localDb;
 }
 
-// Alias for backwards compatibility
+// Alias for backwards compatibility - now also async
 export const getDbSync = getDb;
 
 /**
@@ -254,17 +257,17 @@ export function closeDb(): void {
 
 /**
  * Run a transaction (local only - D1 uses batches)
- * @deprecated Use getAsyncDb().transaction() instead
+ * @deprecated Use getDatabase().transaction() from ./async-db instead
  */
-export function transaction<T>(fn: (db: UnifiedDb) => T): T {
-  const db = getDb();
+export async function transaction<T>(fn: (db: UnifiedDb) => T): Promise<T> {
+  const db = await getDb();
   return (db as any).transaction(() => fn(db))();
 }
 
 // FTS functions (local only)
-export function rebuildFtsIndex(): void {
+export async function rebuildFtsIndex(): Promise<void> {
   if (isCloudflareRuntime()) return;
-  const db = getDb();
+  const db = await getDb();
   (db as any).transaction(() => {
     (db as any).exec('DELETE FROM cards_fts');
     (db as any).exec(`
@@ -275,15 +278,15 @@ export function rebuildFtsIndex(): void {
   })();
 }
 
-export function updateFtsIndex(
+export async function updateFtsIndex(
   cardId: string,
   name: string,
   description: string | null,
   creator: string | null,
   creatorNotes: string | null
-): void {
+): Promise<void> {
   if (isCloudflareRuntime()) return;
-  const db = getDb();
+  const db = await getDb();
   (db as any).transaction(() => {
     db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
     db.prepare(`
@@ -293,8 +296,8 @@ export function updateFtsIndex(
   })();
 }
 
-export function removeFtsIndex(cardId: string): void {
+export async function removeFtsIndex(cardId: string): Promise<void> {
   if (isCloudflareRuntime()) return;
-  const db = getDb();
+  const db = await getDb();
   db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
 }

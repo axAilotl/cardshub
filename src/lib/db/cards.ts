@@ -12,7 +12,7 @@ async function updateFtsIndexAsync(cardId: string, name: string, description: st
   try {
     const { updateFtsIndex, isCloudflareRuntime } = await import('./index');
     if (!isCloudflareRuntime()) {
-      updateFtsIndex(cardId, name, description, creator, creatorNotes);
+      await updateFtsIndex(cardId, name, description, creator, creatorNotes);
     }
   } catch {
     // FTS not available
@@ -23,7 +23,7 @@ async function removeFtsIndexAsync(cardId: string): Promise<void> {
   try {
     const { removeFtsIndex, isCloudflareRuntime } = await import('./index');
     if (!isCloudflareRuntime()) {
-      removeFtsIndex(cardId);
+      await removeFtsIndex(cardId);
     }
   } catch {
     // FTS not available

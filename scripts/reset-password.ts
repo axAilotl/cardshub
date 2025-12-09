@@ -11,7 +11,7 @@
  */
 
 import { updatePasswordByUsername } from '../src/lib/auth';
-import { getDbSync } from '../src/lib/db';
+import { getDb } from '../src/lib/db';
 
 async function main() {
   const [username, newPassword] = process.argv.slice(2);
@@ -27,8 +27,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Ensure database is initialized (sync version for scripts)
-  const db = getDbSync();
+  // Ensure database is initialized (now async)
+  const db = await getDb();
 
   // Check if user exists
   const user = db.prepare('SELECT username, is_admin FROM users WHERE username = ?').get(username) as { username: string; is_admin: number } | undefined;
