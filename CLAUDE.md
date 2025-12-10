@@ -225,10 +225,16 @@ Note: NSFW content is handled via tags (e.g., "nsfw" tag) and the existing blur 
 
 ### Character Card Parsing
 Uses `@character-foundry/*` packages from GitHub Packages registry:
-- `@character-foundry/loader` - Universal card loader (detects format, parses all types)
-- `@character-foundry/png` - PNG tEXt chunk read/write
-- `@character-foundry/schemas` - CCv2/CCv3 TypeScript types
-- `@character-foundry/core` - Shared utilities (toUint8Array, etc.)
+- `@character-foundry/loader` (0.1.6) - Universal card loader (detects format, parses all types)
+- `@character-foundry/voxta` (0.1.6) - Voxta package parsing
+- `@character-foundry/png` (0.0.3) - PNG tEXt chunk read/write
+- `@character-foundry/charx` (0.0.3) - CharX package parsing
+- `@character-foundry/core` (0.0.2) - Shared utilities (toUint8Array, etc.)
+- `@character-foundry/tokenizers` (0.1.0) - Token counting
+- `@character-foundry/schemas` (0.1.0) - CCv2/CCv3 TypeScript types
+- `@character-foundry/character-foundry` (0.1.0) - Meta package (includes all)
+
+**ESM Configuration**: These packages are ESM-only. For Next.js server-side compatibility, all `@character-foundry/*` packages must be listed in `serverExternalPackages` in `next.config.ts`.
 
 Features:
 - PNG tEXt chunk extraction (base64-encoded JSON in "chara" field)
