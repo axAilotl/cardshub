@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
 
   try {
     // Apply rate limiting
-    const rl = applyRateLimit(clientId, 'register');
+    const rl = await applyRateLimit(clientId, 'register');
     logRateLimit(clientId, 'register', rl.allowed, rl.remaining);
 
     if (!rl.allowed) {

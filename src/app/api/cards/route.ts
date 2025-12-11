@@ -458,18 +458,13 @@ export async function POST(request: NextRequest) {
       if (voxtaResponse === 'single') isVoxtaPackage = true;
     }
 
-    // Check for client-provided metadata (client-side parsing)
-    let clientMetadata: ClientMetadata | null = null;
-    if (metadataJson) {
-      try {
-        clientMetadata = JSON.parse(metadataJson);
-      } catch {
-        console.warn('Invalid client metadata, falling back to server-side parsing');
-      }
-    }
+    // NOTE: Client-provided metadata is NO LONGER trusted.
+    // We always recompute everything server-side for security.
+    // The metadataJson parameter is accepted but ignored.
+    void metadataJson; // Explicitly ignore (backwards compat - clients may still send it)
 
-    // Use client-provided content hash or compute server-side
-    const contentHash = clientMetadata?.contentHash || computeContentHash(buffer);
+    // ALWAYS compute content hash server-side (never trust client)
+    const contentHash = computeContentHash(buffer);
 
     // Parse card data - use client metadata if available, otherwise parse server-side
     // Definite assignment assertion: parsedCard is always assigned before use
@@ -630,21 +625,9 @@ export async function POST(request: NextRequest) {
             path: a.path,
           }));
 
-        if (clientMetadata) {
-          // Use client-parsed metadata (reduces server CPU usage)
-          parsedCard = {
-            name: clientMetadata.name,
-            description: clientMetadata.description,
-            creator: clientMetadata.creator,
-            creatorNotes: clientMetadata.creatorNotes,
-            specVersion: clientMetadata.specVersion,
-            sourceFormat: clientMetadata.sourceFormat,
-            tokens: clientMetadata.tokens,
-            metadata: clientMetadata.metadata,
-            tags: clientMetadata.tags,
-            raw: JSON.parse(clientMetadata.cardData),
-          };
-        } else {
+        // ALWAYS compute tokens and metadata server-side (never trust client)
+        // Client metadata is only used for non-security-sensitive display fields
+        {
           // Full server-side parsing (fallback for clients without JS)
           const tokens = countCardTokens(cardData);
 
@@ -794,6 +777,16 @@ export async function POST(request: NextRequest) {
     const actualAssetsCount = savedAssetsData.length || extractedAssets.length;
     const hasActualAssets = actualAssetsCount > 0;
 
+    // Enforce card data size limit (10MB max for cardData JSON)
+    const cardDataJson = JSON.stringify(parsedCard.raw);
+    const MAX_CARD_DATA_SIZE = 10 * 1024 * 1024; // 10MB
+    if (cardDataJson.length > MAX_CARD_DATA_SIZE) {
+      return NextResponse.json(
+        { error: `Card data exceeds maximum size limit (${Math.round(MAX_CARD_DATA_SIZE / 1024 / 1024)}MB)` },
+        { status: 400 }
+      );
+    }
+
     // Create card with initial version in database
     // Note: createCard is still synchronous/sqlite, needs refactoring next
     const { cardId, versionId } = await createCard({
@@ -827,7 +820,7 @@ export async function POST(request: NextRequest) {
         thumbnailPath,
         thumbnailWidth,
         thumbnailHeight,
-        cardData: JSON.stringify(parsedCard.raw),
+        cardData: cardDataJson,
       },
     });
 

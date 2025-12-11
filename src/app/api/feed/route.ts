@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getDatabase } from '@/lib/db/async-db';
 import { getCardsByIds } from '@/lib/db/cards';
 import { getSession } from '@/lib/auth';
+import { parseQuery } from '@/lib/validations';
 import type { CardListItem, PaginatedResponse } from '@/types/card';
 
 type FeedReason = 'followed_user' | 'followed_tag' | 'trending';
+
+// Zod schema for feed query params
+const FeedParamsSchema = z.object({
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(50).default(24),
+});
 
 /**
  * GET /api/feed
@@ -13,12 +21,13 @@ type FeedReason = 'followed_user' | 'followed_tag' | 'trending';
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession();
-    const { searchParams } = request.nextUrl;
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
+    // Validate query params with Zod
+    const parsed = parseQuery(request.nextUrl.searchParams, FeedParamsSchema);
+    if ('error' in parsed) return parsed.error;
+    const { page, limit } = parsed.data;
     const offset = (page - 1) * limit;
 
+    const session = await getSession();
     const db = await getDatabase();
     const userId = session?.user?.id || null;
 
@@ -42,41 +51,48 @@ export async function GET(request: NextRequest) {
     // Collect card IDs with reasons
     const cardReasons = new Map<string, FeedReason>();
 
+    // Run personalized queries in PARALLEL for better performance
+    let followedUserCards: { id: string }[] = [];
+    let followedTagCards: { id: string }[] = [];
+
     if (userId) {
-      // Get cards from followed users
-      const followedUserCards = await db.prepare(`
-        SELECT c.id
-        FROM cards c
-        WHERE c.uploader_id IN (
-          SELECT following_id FROM user_follows WHERE follower_id = ?
-        )
-        AND c.visibility = 'public'
-        AND c.moderation_state = 'ok'
-        ${blockedTagCondition}
-        ORDER BY c.created_at DESC
-        LIMIT 50
-      `).all<{ id: string }>(userId);
+      // Parallel queries for followed users and followed tags
+      [followedUserCards, followedTagCards] = await Promise.all([
+        // Get cards from followed users
+        db.prepare(`
+          SELECT c.id
+          FROM cards c
+          WHERE c.uploader_id IN (
+            SELECT following_id FROM user_follows WHERE follower_id = ?
+          )
+          AND c.visibility = 'public'
+          AND c.moderation_state = 'ok'
+          ${blockedTagCondition}
+          ORDER BY c.created_at DESC
+          LIMIT 50
+        `).all<{ id: string }>(userId),
+
+        // Get cards with followed tags
+        db.prepare(`
+          SELECT DISTINCT c.id
+          FROM cards c
+          JOIN card_tags ct ON c.id = ct.card_id
+          WHERE ct.tag_id IN (
+            SELECT tag_id FROM tag_preferences WHERE user_id = ? AND preference = 'follow'
+          )
+          AND c.visibility = 'public'
+          AND c.moderation_state = 'ok'
+          ${blockedTagCondition}
+          ORDER BY c.created_at DESC
+          LIMIT 50
+        `).all<{ id: string }>(userId),
+      ]);
 
       for (const card of followedUserCards) {
         if (!cardReasons.has(card.id)) {
           cardReasons.set(card.id, 'followed_user');
         }
       }
-
-      // Get cards with followed tags
-      const followedTagCards = await db.prepare(`
-        SELECT DISTINCT c.id
-        FROM cards c
-        JOIN card_tags ct ON c.id = ct.card_id
-        WHERE ct.tag_id IN (
-          SELECT tag_id FROM tag_preferences WHERE user_id = ? AND preference = 'follow'
-        )
-        AND c.visibility = 'public'
-        AND c.moderation_state = 'ok'
-        ${blockedTagCondition}
-        ORDER BY c.created_at DESC
-        LIMIT 50
-      `).all<{ id: string }>(userId);
 
       for (const card of followedTagCards) {
         if (!cardReasons.has(card.id)) {
@@ -86,13 +102,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get trending cards to fill gaps
+    // Uses trending_score generated column + index for efficient sorting
     const trendingCards = await db.prepare(`
       SELECT c.id
       FROM cards c
       WHERE c.visibility = 'public'
       AND c.moderation_state = 'ok'
       ${blockedTagCondition}
-      ORDER BY (c.upvotes + c.downloads_count * 0.5) DESC, c.created_at DESC
+      ORDER BY c.trending_score DESC, c.created_at DESC
       LIMIT 100
     `).all<{ id: string }>();
 

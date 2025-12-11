@@ -11,8 +11,8 @@ build/
 *.db-shm
 *.db-wal
 
-# uploads
-uploads/
+# uploads (root directory only, not src/app/api/uploads/)
+/uploads/
 
 # env
 .env*
@@ -25,6 +25,7 @@ uploads/
 next-env.d.ts
 .vercel
 .wrangler
+cookies.txt
 
 # build output
 .open-next/

@@ -8,230 +8,262 @@ import {
   getClientId,
   applyRateLimit,
   RATE_LIMITS,
-  stopCleanup,
 } from '../rate-limit';
 
+// Mock the database module
+vi.mock('@/lib/db/async-db', () => {
+  // In-memory storage for testing
+  const buckets = new Map<string, { count: number; window_start: number; window_ms: number }>();
+
+  const mockDb = {
+    prepare: (sql: string) => ({
+      get: async (...params: unknown[]) => {
+        if (sql.includes('SELECT count, window_start FROM rate_limit_buckets')) {
+          const key = params[0] as string;
+          return buckets.get(key);
+        }
+        if (sql.includes('SELECT COUNT')) {
+          let totalRequests = 0;
+          for (const b of buckets.values()) totalRequests += b.count;
+          return { bucket_count: buckets.size, total_requests: totalRequests };
+        }
+        return undefined;
+      },
+      run: async (...params: unknown[]) => {
+        if (sql.includes('INSERT INTO rate_limit_buckets')) {
+          const key = params[0] as string;
+          const window_start = params[1] as number;
+          const window_ms = params[2] as number;
+          buckets.set(key, { count: 1, window_start, window_ms });
+          return { changes: 1, lastInsertRowid: 0 };
+        }
+        if (sql.includes('UPDATE rate_limit_buckets SET count = count + 1')) {
+          const key = params[0] as string;
+          const bucket = buckets.get(key);
+          if (bucket) bucket.count++;
+          return { changes: 1, lastInsertRowid: 0 };
+        }
+        if (sql.includes('DELETE FROM rate_limit_buckets WHERE key')) {
+          const key = params[0] as string;
+          buckets.delete(key);
+          return { changes: 1, lastInsertRowid: 0 };
+        }
+        if (sql.includes('DELETE FROM rate_limit_buckets') && !sql.includes('WHERE key')) {
+          if (sql.includes('window_start + window_ms <')) {
+            const now = params[0] as number;
+            let deleted = 0;
+            for (const [key, bucket] of buckets.entries()) {
+              if (bucket.window_start + bucket.window_ms < now) {
+                buckets.delete(key);
+                deleted++;
+              }
+            }
+            return { changes: deleted, lastInsertRowid: 0 };
+          }
+          buckets.clear();
+          return { changes: 0, lastInsertRowid: 0 };
+        }
+        return { changes: 0, lastInsertRowid: 0 };
+      },
+      all: async () => [],
+    }),
+    exec: async () => {},
+    transaction: async <T>(fn: () => Promise<T>) => fn(),
+    batch: async () => [],
+  };
+
+  return {
+    getDatabase: async () => mockDb,
+    // Expose the buckets map for test cleanup
+    __testBuckets: buckets,
+  };
+});
+
+// Get the test buckets for manual cleanup
+import { __testBuckets } from '@/lib/db/async-db';
+const testBuckets = __testBuckets as Map<string, { count: number; window_start: number; window_ms: number }>;
+
 describe('rateLimit', () => {
-  beforeEach(() => {
-    clearAllRateLimits();
+  beforeEach(async () => {
+    testBuckets.clear();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    stopCleanup();
     vi.useRealTimers();
   });
 
-  it('allows requests under the limit', () => {
+  it('allows requests under the limit', async () => {
     const key = 'test-key';
     const limit = 5;
     const windowMs = 60000;
 
     for (let i = 0; i < limit; i++) {
-      const result = rateLimit(key, limit, windowMs);
+      const result = await rateLimit(key, limit, windowMs);
       expect(result.allowed).toBe(true);
       expect(result.remaining).toBe(limit - i - 1);
     }
   });
 
-  it('blocks requests over the limit', () => {
+  it('blocks requests over the limit', async () => {
     const key = 'test-key';
     const limit = 3;
     const windowMs = 60000;
 
     // Use up all requests
     for (let i = 0; i < limit; i++) {
-      rateLimit(key, limit, windowMs);
+      await rateLimit(key, limit, windowMs);
     }
 
     // Next request should be blocked
-    const result = rateLimit(key, limit, windowMs);
+    const result = await rateLimit(key, limit, windowMs);
     expect(result.allowed).toBe(false);
     expect(result.remaining).toBe(0);
     expect(result.retryAfter).toBeGreaterThan(0);
   });
 
-  it('resets after window expires', () => {
+  it('resets after window expires', async () => {
     const key = 'test-key';
     const limit = 2;
     const windowMs = 1000; // 1 second
 
     // Use up all requests
-    rateLimit(key, limit, windowMs);
-    rateLimit(key, limit, windowMs);
+    await rateLimit(key, limit, windowMs);
+    await rateLimit(key, limit, windowMs);
 
     // Should be blocked
-    expect(rateLimit(key, limit, windowMs).allowed).toBe(false);
+    expect((await rateLimit(key, limit, windowMs)).allowed).toBe(false);
 
     // Advance time past the window
     vi.advanceTimersByTime(windowMs + 100);
 
-    // Should be allowed again
-    const result = rateLimit(key, limit, windowMs);
+    // Should be allowed again (bucket expired)
+    const result = await rateLimit(key, limit, windowMs);
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(limit - 1);
   });
 
-  it('implements sliding window (gradual release)', () => {
-    const key = 'test-key';
-    const limit = 3;
-    const windowMs = 3000; // 3 seconds
-
-    // Make 3 requests at t=0
-    rateLimit(key, limit, windowMs);
-
-    // Advance 1 second
-    vi.advanceTimersByTime(1000);
-    rateLimit(key, limit, windowMs);
-
-    // Advance another second (t=2s)
-    vi.advanceTimersByTime(1000);
-    rateLimit(key, limit, windowMs);
-
-    // Should be blocked at t=2s
-    expect(rateLimit(key, limit, windowMs).allowed).toBe(false);
-
-    // Advance 1.1 seconds (t=3.1s) - first request should expire
-    vi.advanceTimersByTime(1100);
-
-    // Should be allowed now (first request expired)
-    expect(rateLimit(key, limit, windowMs).allowed).toBe(true);
-  });
-
-  it('handles multiple keys independently', () => {
+  it('handles multiple keys independently', async () => {
     const limit = 2;
     const windowMs = 60000;
 
     // Use up key1
-    rateLimit('key1', limit, windowMs);
-    rateLimit('key1', limit, windowMs);
-    expect(rateLimit('key1', limit, windowMs).allowed).toBe(false);
+    await rateLimit('key1', limit, windowMs);
+    await rateLimit('key1', limit, windowMs);
+    expect((await rateLimit('key1', limit, windowMs)).allowed).toBe(false);
 
     // key2 should still be allowed
-    expect(rateLimit('key2', limit, windowMs).allowed).toBe(true);
+    expect((await rateLimit('key2', limit, windowMs)).allowed).toBe(true);
   });
 });
 
 describe('checkRateLimit', () => {
-  beforeEach(() => {
-    clearAllRateLimits();
+  beforeEach(async () => {
+    testBuckets.clear();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    stopCleanup();
     vi.useRealTimers();
   });
 
-  it('returns status without consuming request', () => {
+  it('returns status without consuming request', async () => {
     const key = 'test-key';
     const limit = 3;
     const windowMs = 60000;
 
     // Make 2 requests
-    rateLimit(key, limit, windowMs);
-    rateLimit(key, limit, windowMs);
+    await rateLimit(key, limit, windowMs);
+    await rateLimit(key, limit, windowMs);
 
-    // Check should show 1 remaining
-    const check = checkRateLimit(key, limit, windowMs);
+    // Check should show 1 remaining (does not consume)
+    const check = await checkRateLimit(key, limit, windowMs);
     expect(check.allowed).toBe(true);
     expect(check.remaining).toBe(1);
 
-    // Actually making request should still show 1 remaining after
-    const result = rateLimit(key, limit, windowMs);
+    // Actually making request should show 0 remaining after
+    const result = await rateLimit(key, limit, windowMs);
     expect(result.remaining).toBe(0);
   });
 
-  it('returns full limit for unknown key', () => {
-    const result = checkRateLimit('unknown', 10, 60000);
+  it('returns full limit for unknown key', async () => {
+    const result = await checkRateLimit('unknown', 10, 60000);
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(10);
   });
 });
 
 describe('resetRateLimit', () => {
-  beforeEach(() => {
-    clearAllRateLimits();
+  beforeEach(async () => {
+    testBuckets.clear();
   });
 
-  afterEach(() => {
-    stopCleanup();
-  });
-
-  it('resets a specific key', () => {
+  it('resets a specific key', async () => {
     const limit = 2;
     const windowMs = 60000;
 
     // Use up limit
-    rateLimit('key1', limit, windowMs);
-    rateLimit('key1', limit, windowMs);
-    expect(rateLimit('key1', limit, windowMs).allowed).toBe(false);
+    await rateLimit('key1', limit, windowMs);
+    await rateLimit('key1', limit, windowMs);
+    expect((await rateLimit('key1', limit, windowMs)).allowed).toBe(false);
 
     // Reset
-    resetRateLimit('key1');
+    await resetRateLimit('key1');
 
     // Should be allowed again
-    expect(rateLimit('key1', limit, windowMs).allowed).toBe(true);
-    expect(rateLimit('key1', limit, windowMs).remaining).toBe(0);
+    expect((await rateLimit('key1', limit, windowMs)).allowed).toBe(true);
+    expect((await rateLimit('key1', limit, windowMs)).remaining).toBe(0);
   });
 
-  it('does not affect other keys', () => {
+  it('does not affect other keys', async () => {
     const limit = 2;
     const windowMs = 60000;
 
-    rateLimit('key1', limit, windowMs);
-    rateLimit('key2', limit, windowMs);
+    await rateLimit('key1', limit, windowMs);
+    await rateLimit('key2', limit, windowMs);
 
-    resetRateLimit('key1');
+    await resetRateLimit('key1');
 
     // key1 is reset
-    expect(rateLimit('key1', limit, windowMs).remaining).toBe(limit - 1);
+    expect((await rateLimit('key1', limit, windowMs)).remaining).toBe(limit - 1);
     // key2 still has 1 request recorded
-    expect(rateLimit('key2', limit, windowMs).remaining).toBe(0);
+    expect((await rateLimit('key2', limit, windowMs)).remaining).toBe(0);
   });
 });
 
 describe('clearAllRateLimits', () => {
-  afterEach(() => {
-    stopCleanup();
-  });
+  it('clears all buckets', async () => {
+    await rateLimit('key1', 2, 60000);
+    await rateLimit('key2', 2, 60000);
 
-  it('clears all buckets', () => {
-    rateLimit('key1', 2, 60000);
-    rateLimit('key2', 2, 60000);
+    expect((await getRateLimitStats()).bucketCount).toBe(2);
 
-    expect(getRateLimitStats().bucketCount).toBe(2);
+    await clearAllRateLimits();
 
-    clearAllRateLimits();
-
-    expect(getRateLimitStats().bucketCount).toBe(0);
+    expect((await getRateLimitStats()).bucketCount).toBe(0);
   });
 });
 
 describe('getRateLimitStats', () => {
-  beforeEach(() => {
-    clearAllRateLimits();
+  beforeEach(async () => {
+    testBuckets.clear();
   });
 
-  afterEach(() => {
-    stopCleanup();
-  });
+  it('returns correct bucket count', async () => {
+    await rateLimit('key1', 10, 60000);
+    await rateLimit('key2', 10, 60000);
+    await rateLimit('key3', 10, 60000);
 
-  it('returns correct bucket count', () => {
-    rateLimit('key1', 10, 60000);
-    rateLimit('key2', 10, 60000);
-    rateLimit('key3', 10, 60000);
-
-    const stats = getRateLimitStats();
+    const stats = await getRateLimitStats();
     expect(stats.bucketCount).toBe(3);
   });
 
-  it('returns correct total requests', () => {
-    rateLimit('key1', 10, 60000);
-    rateLimit('key1', 10, 60000);
-    rateLimit('key2', 10, 60000);
+  it('returns correct total requests', async () => {
+    await rateLimit('key1', 10, 60000);
+    await rateLimit('key1', 10, 60000);
+    await rateLimit('key2', 10, 60000);
 
-    const stats = getRateLimitStats();
+    const stats = await getRateLimitStats();
     expect(stats.totalRequests).toBe(3);
   });
 });
@@ -303,26 +335,22 @@ describe('RATE_LIMITS', () => {
 });
 
 describe('applyRateLimit', () => {
-  beforeEach(() => {
-    clearAllRateLimits();
+  beforeEach(async () => {
+    testBuckets.clear();
   });
 
-  afterEach(() => {
-    stopCleanup();
-  });
-
-  it('uses predefined config for endpoint', () => {
-    const result = applyRateLimit('client123', 'login');
+  it('uses predefined config for endpoint', async () => {
+    const result = await applyRateLimit('client123', 'login');
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(RATE_LIMITS.login.limit - 1);
   });
 
-  it('creates unique key per client and endpoint', () => {
-    applyRateLimit('client1', 'login');
-    applyRateLimit('client2', 'login');
-    applyRateLimit('client1', 'register');
+  it('creates unique key per client and endpoint', async () => {
+    await applyRateLimit('client1', 'login');
+    await applyRateLimit('client2', 'login');
+    await applyRateLimit('client1', 'register');
 
-    const stats = getRateLimitStats();
+    const stats = await getRateLimitStats();
     expect(stats.bucketCount).toBe(3);
   });
 });

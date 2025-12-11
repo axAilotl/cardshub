@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS cards (
   comments_count INTEGER DEFAULT 0,
   forks_count INTEGER DEFAULT 0,
 
+  -- v1.3: Generated column for trending sort (virtual = computed on read)
+  trending_score REAL GENERATED ALWAYS AS (upvotes + downloads_count * 0.5) VIRTUAL,
+
   -- Relationships
   uploader_id TEXT REFERENCES users(id),
 
@@ -296,6 +299,18 @@ CREATE INDEX IF NOT EXISTS idx_collections_uploader ON collections(uploader_id);
 CREATE INDEX IF NOT EXISTS idx_collections_slug ON collections(slug);
 CREATE INDEX IF NOT EXISTS idx_collections_visibility ON collections(visibility);
 CREATE INDEX IF NOT EXISTS idx_cards_collection ON cards(collection_id);
+
+-- v1.3: Rate limiting (persistent for serverless/edge)
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0,
+  window_start INTEGER NOT NULL,
+  window_ms INTEGER NOT NULL
+);
+
+-- Index on trending score for fast ORDER BY
+-- NOTE: Requires trending_score generated column on cards table (added via migration)
+CREATE INDEX IF NOT EXISTS idx_cards_trending ON cards(trending_score DESC);
 
 -- Full-text search index (FTS5)
 -- Indexes card name, description, creator, and creator_notes for fast search

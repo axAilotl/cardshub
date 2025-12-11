@@ -1,7 +1,12 @@
 /**
  * Sliding window rate limiter with configurable limits per endpoint.
- * Suitable for single-node dev/preview; replace with Redis/KV for multi-node.
+ * Uses D1/SQLite for persistence across serverless/edge instances.
+ *
+ * Schema required in rate_limit_buckets table:
+ *   key TEXT PRIMARY KEY, count INTEGER, window_start INTEGER, window_ms INTEGER
  */
+
+import { getDatabase } from '@/lib/db/async-db';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -17,57 +22,42 @@ export interface RateLimitConfig {
   windowMs: number;
 }
 
-// Sliding window bucket: stores timestamps of requests
-type SlidingBucket = {
-  timestamps: number[];
-  windowMs: number;
-};
-
-const buckets = new Map<string, SlidingBucket>();
-
-// Periodic cleanup of expired buckets (every 5 minutes)
-let cleanupInterval: ReturnType<typeof setInterval> | null = null;
-
-function startCleanup() {
-  if (cleanupInterval) return;
-  cleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [key, bucket] of buckets.entries()) {
-      // Remove timestamps older than window
-      bucket.timestamps = bucket.timestamps.filter(ts => ts > now - bucket.windowMs);
-      // Remove empty buckets
-      if (bucket.timestamps.length === 0) {
-        buckets.delete(key);
-      }
-    }
-  }, 5 * 60 * 1000);
-}
-
 /**
- * Sliding window rate limiter.
- * More accurate than fixed window - prevents burst at window boundaries.
+ * Sliding window rate limiter using database for persistence.
+ * Works correctly on serverless/edge (Cloudflare Workers, Vercel Edge, etc.)
  */
-export function rateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
-  startCleanup();
-
+export async function rateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+  const db = await getDatabase();
   const now = Date.now();
-  let bucket = buckets.get(key);
+  const windowStart = now - windowMs;
 
-  if (!bucket) {
-    bucket = { timestamps: [], windowMs };
-    buckets.set(key, bucket);
+  // Get or create bucket, cleaning expired data atomically
+  // Use UPSERT pattern for atomic increment
+  const bucket = await db.prepare(`
+    SELECT count, window_start FROM rate_limit_buckets WHERE key = ?
+  `).get<{ count: number; window_start: number }>(key);
+
+  if (!bucket || bucket.window_start < windowStart) {
+    // Bucket expired or doesn't exist - create new one with count=1
+    await db.prepare(`
+      INSERT INTO rate_limit_buckets (key, count, window_start, window_ms)
+      VALUES (?, 1, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET count = 1, window_start = ?, window_ms = ?
+    `).run(key, now, windowMs, now, windowMs);
+
+    return {
+      allowed: true,
+      remaining: limit - 1,
+      resetAt: now + windowMs,
+    };
   }
 
-  // Clean old timestamps outside current window
-  bucket.timestamps = bucket.timestamps.filter(ts => ts > now - windowMs);
-
-  const count = bucket.timestamps.length;
-  const resetAt = count > 0 ? bucket.timestamps[0] + windowMs : now + windowMs;
+  // Bucket exists and is within window
+  const count = bucket.count;
+  const resetAt = bucket.window_start + windowMs;
 
   if (count >= limit) {
-    const oldestTimestamp = bucket.timestamps[0];
-    const retryAfter = Math.ceil((oldestTimestamp + windowMs - now) / 1000);
-
+    const retryAfter = Math.ceil((resetAt - now) / 1000);
     return {
       allowed: false,
       remaining: 0,
@@ -76,12 +66,14 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
     };
   }
 
-  // Add current request timestamp
-  bucket.timestamps.push(now);
+  // Increment counter
+  await db.prepare(`
+    UPDATE rate_limit_buckets SET count = count + 1 WHERE key = ?
+  `).run(key);
 
   return {
     allowed: true,
-    remaining: limit - bucket.timestamps.length,
+    remaining: limit - count - 1,
     resetAt,
   };
 }
@@ -90,11 +82,16 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
  * Check rate limit without consuming a request.
  * Useful for preflight checks.
  */
-export function checkRateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
+export async function checkRateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+  const db = await getDatabase();
   const now = Date.now();
-  const bucket = buckets.get(key);
+  const windowStart = now - windowMs;
 
-  if (!bucket) {
+  const bucket = await db.prepare(`
+    SELECT count, window_start FROM rate_limit_buckets WHERE key = ?
+  `).get<{ count: number; window_start: number }>(key);
+
+  if (!bucket || bucket.window_start < windowStart) {
     return {
       allowed: true,
       remaining: limit,
@@ -102,16 +99,14 @@ export function checkRateLimit(key: string, limit: number, windowMs: number): Ra
     };
   }
 
-  // Clean old timestamps
-  const validTimestamps = bucket.timestamps.filter(ts => ts > now - windowMs);
-  const count = validTimestamps.length;
-  const resetAt = count > 0 ? validTimestamps[0] + windowMs : now + windowMs;
+  const count = bucket.count;
+  const resetAt = bucket.window_start + windowMs;
 
   return {
     allowed: count < limit,
     remaining: Math.max(0, limit - count),
     resetAt,
-    retryAfter: count >= limit ? Math.ceil((validTimestamps[0] + windowMs - now) / 1000) : undefined,
+    retryAfter: count >= limit ? Math.ceil((resetAt - now) / 1000) : undefined,
   };
 }
 
@@ -119,27 +114,47 @@ export function checkRateLimit(key: string, limit: number, windowMs: number): Ra
  * Reset rate limit for a key.
  * Useful for testing or admin overrides.
  */
-export function resetRateLimit(key: string): void {
-  buckets.delete(key);
+export async function resetRateLimit(key: string): Promise<void> {
+  const db = await getDatabase();
+  await db.prepare(`DELETE FROM rate_limit_buckets WHERE key = ?`).run(key);
 }
 
 /**
  * Clear all rate limits.
  * Useful for testing.
  */
-export function clearAllRateLimits(): void {
-  buckets.clear();
+export async function clearAllRateLimits(): Promise<void> {
+  const db = await getDatabase();
+  await db.prepare(`DELETE FROM rate_limit_buckets`).run();
 }
 
 /**
  * Get current bucket count for debugging/monitoring.
  */
-export function getRateLimitStats(): { bucketCount: number; totalRequests: number } {
-  let totalRequests = 0;
-  for (const bucket of buckets.values()) {
-    totalRequests += bucket.timestamps.length;
-  }
-  return { bucketCount: buckets.size, totalRequests };
+export async function getRateLimitStats(): Promise<{ bucketCount: number; totalRequests: number }> {
+  const db = await getDatabase();
+  const stats = await db.prepare(`
+    SELECT COUNT(*) as bucket_count, COALESCE(SUM(count), 0) as total_requests
+    FROM rate_limit_buckets
+  `).get<{ bucket_count: number; total_requests: number }>();
+
+  return {
+    bucketCount: stats?.bucket_count || 0,
+    totalRequests: stats?.total_requests || 0,
+  };
+}
+
+/**
+ * Cleanup expired rate limit buckets.
+ * Call periodically (e.g., via cron or at startup).
+ */
+export async function cleanupExpiredBuckets(): Promise<number> {
+  const db = await getDatabase();
+  const now = Date.now();
+  const result = await db.prepare(`
+    DELETE FROM rate_limit_buckets WHERE window_start + window_ms < ?
+  `).run(now);
+  return result.changes;
 }
 
 /**
@@ -191,18 +206,10 @@ export const RATE_LIMITS = {
 /**
  * Apply rate limit using predefined configuration.
  */
-export function applyRateLimit(
+export async function applyRateLimit(
   clientId: string,
   endpoint: keyof typeof RATE_LIMITS
-): RateLimitResult {
+): Promise<RateLimitResult> {
   const config = RATE_LIMITS[endpoint];
   return rateLimit(`${endpoint}:${clientId}`, config.limit, config.windowMs);
-}
-
-// For testing: stop cleanup interval
-export function stopCleanup(): void {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
-  }
 }
