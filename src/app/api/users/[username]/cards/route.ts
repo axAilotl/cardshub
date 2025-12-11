@@ -225,12 +225,19 @@ export async function GET(
       ...(viewerId && { isFavorited: viewerFavorites.has(row.id) }),
     }));
 
+    // Cache based on whether viewer-specific data is included
+    const cacheControl = viewerId
+      ? 'private, max-age=30'
+      : 'public, s-maxage=60, stale-while-revalidate=120';
+
     return NextResponse.json({
       items,
       total: totalResult?.total || 0,
       page,
       limit,
       hasMore: offset + items.length < (totalResult?.total || 0),
+    }, {
+      headers: { 'Cache-Control': cacheControl },
     });
   } catch (error) {
     console.error('Error fetching user cards:', error);

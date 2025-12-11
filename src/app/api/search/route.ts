@@ -132,6 +132,8 @@ export async function GET(request: NextRequest) {
       total: totalResult?.total || 0,
       query: query,
       hasMore: offset + items.length < (totalResult?.total || 0),
+    }, {
+      headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
     });
   } catch (error) {
     console.error('Search error:', error);

@@ -103,7 +103,14 @@ export async function GET(
       isFollowing,
     };
 
-    return NextResponse.json(profile);
+    // Cache public profiles, shorter TTL if user-specific data included
+    const cacheControl = session
+      ? 'private, max-age=30'
+      : 'public, s-maxage=120, stale-while-revalidate=300';
+
+    return NextResponse.json(profile, {
+      headers: { 'Cache-Control': cacheControl },
+    });
   } catch (error) {
     console.error('Error fetching user profile:', error);
     return NextResponse.json(
