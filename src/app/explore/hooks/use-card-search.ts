@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import type { CardListItem, SortOption, PaginatedResponse, CardFilters } from '@/types/card';
+import type { CardListItem, SortOption, PaginatedResponse } from '@/types/card';
 import { useSettings } from '@/lib/settings';
+
+const CARDS_PER_PAGE = 20;
 
 interface TagGroup {
   category: string;
@@ -15,8 +17,12 @@ interface UseCardSearchReturn {
   cards: CardListItem[];
   tags: TagGroup[];
   isLoading: boolean;
-  hasMore: boolean;
   total: number;
+
+  // Pagination
+  page: number;
+  totalPages: number;
+  goToPage: (page: number) => void;
 
   // Filter state
   search: string;
@@ -39,7 +45,6 @@ interface UseCardSearchReturn {
   setHasEmbeddedImages: (value: boolean) => void;
 
   // Actions
-  loadMore: () => void;
   handleSearch: () => void;
   handleClear: () => void;
 
@@ -56,9 +61,11 @@ export function useCardSearch(): UseCardSearchReturn {
   const [cards, setCards] = useState<CardListItem[]>([]);
   const [tags, setTags] = useState<TagGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+
+  // Computed pagination
+  const totalPages = Math.ceil(total / CARDS_PER_PAGE);
 
   // Filter state from URL - sync with URL changes
   const urlSearch = searchParams.get('search') || '';
@@ -69,6 +76,7 @@ export function useCardSearch(): UseCardSearchReturn {
   const urlHasAltGreetings = searchParams.get('hasAltGreetings') === 'true';
   const urlHasLorebook = searchParams.get('hasLorebook') === 'true';
   const urlHasEmbeddedImages = searchParams.get('hasEmbeddedImages') === 'true';
+  const urlPage = parseInt(searchParams.get('page') || '1', 10);
 
   const [search, setSearch] = useState(urlSearch);
   const [includeTags, setIncludeTags] = useState<string[]>(urlTags);
@@ -91,7 +99,8 @@ export function useCardSearch(): UseCardSearchReturn {
     setHasAltGreetings(urlHasAltGreetings);
     setHasLorebook(urlHasLorebook);
     setHasEmbeddedImages(urlHasEmbeddedImages);
-  }, [urlSearch, urlTags.join(','), urlExcludeTags.join(','), urlSort, urlMinTokens, urlHasAltGreetings, urlHasLorebook, urlHasEmbeddedImages]);
+    setPage(urlPage);
+  }, [urlSearch, urlTags.join(','), urlExcludeTags.join(','), urlSort, urlMinTokens, urlHasAltGreetings, urlHasLorebook, urlHasEmbeddedImages, urlPage]);
 
   // Fetch tags on mount
   useEffect(() => {
@@ -107,12 +116,9 @@ export function useCardSearch(): UseCardSearchReturn {
     return Array.from(merged);
   }, [excludeTags, settings.bannedTags]);
 
-  // Fetch cards
-  const fetchCards = useCallback(async (resetPage = true) => {
+  // Fetch cards for current page
+  const fetchCards = useCallback(async (targetPage: number) => {
     setIsLoading(true);
-
-    const currentPage = resetPage ? 1 : page;
-    if (resetPage) setPage(1);
 
     const params = new URLSearchParams();
     if (search) params.set('search', search);
@@ -120,8 +126,8 @@ export function useCardSearch(): UseCardSearchReturn {
     // Use merged excludeTags (URL + banned from settings)
     if (allExcludeTags.length > 0) params.set('excludeTags', allExcludeTags.join(','));
     params.set('sort', sort);
-    params.set('page', currentPage.toString());
-    params.set('limit', '24');
+    params.set('page', targetPage.toString());
+    params.set('limit', CARDS_PER_PAGE.toString());
     if (minTokens) params.set('minTokens', minTokens);
     if (hasAltGreetings) params.set('hasAltGreetings', 'true');
     if (hasLorebook) params.set('hasLorebook', 'true');
@@ -135,21 +141,16 @@ export function useCardSearch(): UseCardSearchReturn {
       }
       const data: PaginatedResponse<CardListItem> = await res.json();
 
-      if (resetPage) {
-        setCards(data.items || []);
-      } else {
-        setCards((prev) => [...prev, ...(data.items || [])]);
-      }
-      setHasMore(data.hasMore ?? false);
+      setCards(data.items || []);
       setTotal(data.total ?? 0);
     } catch (error) {
       console.error('Failed to fetch cards:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [search, includeTags, allExcludeTags, sort, page, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages]);
+  }, [search, includeTags, allExcludeTags, sort, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages]);
 
-  // Update URL when filters change
+  // Update URL when filters or page change
   useEffect(() => {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
@@ -160,31 +161,44 @@ export function useCardSearch(): UseCardSearchReturn {
     if (hasAltGreetings) params.set('hasAltGreetings', 'true');
     if (hasLorebook) params.set('hasLorebook', 'true');
     if (hasEmbeddedImages) params.set('hasEmbeddedImages', 'true');
+    if (page > 1) params.set('page', page.toString());
 
     const newUrl = params.toString() ? `?${params.toString()}` : '/explore';
     router.replace(newUrl, { scroll: false });
-  }, [search, includeTags, excludeTags, sort, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages, router]);
+  }, [search, includeTags, excludeTags, sort, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages, page, router]);
 
-  // Fetch cards when filters change (including banned tags from settings)
+  // Fetch cards when filters change - reset to page 1
   useEffect(() => {
-    fetchCards(true);
+    setPage(1);
+    fetchCards(1);
   }, [includeTags, allExcludeTags, sort, hasAltGreetings, hasLorebook, hasEmbeddedImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced search
+  // Debounced search - reset to page 1
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchCards(true);
+      setPage(1);
+      fetchCards(1);
     }, 300);
     return () => clearTimeout(timer);
   }, [search, minTokens]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadMore = () => {
-    setPage((p) => p + 1);
-    fetchCards(false);
+  // Fetch when page changes (from pagination click)
+  useEffect(() => {
+    fetchCards(page);
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Navigate to a specific page
+  const goToPage = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
+      // Scroll to top when changing pages
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleSearch = () => {
-    fetchCards(true);
+    setPage(1);
+    fetchCards(1);
   };
 
   const handleClear = () => {
@@ -196,6 +210,7 @@ export function useCardSearch(): UseCardSearchReturn {
     setHasAltGreetings(false);
     setHasLorebook(false);
     setHasEmbeddedImages(false);
+    setPage(1);
   };
 
   const hasActiveFilters = includeTags.length > 0 || excludeTags.length > 0 || !!minTokens || hasAltGreetings || hasLorebook || hasEmbeddedImages || !!search;
@@ -204,8 +219,10 @@ export function useCardSearch(): UseCardSearchReturn {
     cards,
     tags,
     isLoading,
-    hasMore,
     total,
+    page,
+    totalPages,
+    goToPage,
     search,
     setSearch,
     includeTags,
@@ -222,7 +239,6 @@ export function useCardSearch(): UseCardSearchReturn {
     setHasLorebook,
     hasEmbeddedImages,
     setHasEmbeddedImages,
-    loadMore,
     handleSearch,
     handleClear,
     hasActiveFilters,
