@@ -102,14 +102,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get trending cards to fill gaps
-    // Uses trending_score generated column + index for efficient sorting
+    // Use inline calculation for compatibility (trending_score column may not exist on D1)
     const trendingCards = await db.prepare(`
       SELECT c.id
       FROM cards c
       WHERE c.visibility = 'public'
       AND c.moderation_state = 'ok'
       ${blockedTagCondition}
-      ORDER BY c.trending_score DESC, c.created_at DESC
+      ORDER BY (c.upvotes + c.downloads_count * 0.5) DESC, c.created_at DESC
       LIMIT 100
     `).all<{ id: string }>();
 
