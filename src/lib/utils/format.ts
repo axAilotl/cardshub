@@ -15,6 +15,17 @@ export function formatDate(timestamp: number): string {
 }
 
 /**
+ * Format a Unix timestamp to month and year only (e.g., "January 2024")
+ * Used for "Joined" dates on user profiles
+ */
+export function formatMonthYear(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+  });
+}
+
+/**
  * Format a count with K/M suffixes for large numbers
  */
 export function formatCount(count: number): string {

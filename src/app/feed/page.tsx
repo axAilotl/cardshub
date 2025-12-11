@@ -8,8 +8,7 @@ import { CardModal } from '@/components/cards/card-modal';
 import { Button, Pagination } from '@/components/ui';
 import { useAuth } from '@/lib/auth/context';
 import type { CardListItem, PaginatedResponse } from '@/types/card';
-
-const CARDS_PER_PAGE = 20;
+import { CARDS_PER_PAGE } from '@/lib/constants';
 
 export default function FeedPage() {
   const { user } = useAuth();

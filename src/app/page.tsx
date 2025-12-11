@@ -9,8 +9,7 @@ import { Pagination } from '@/components/ui';
 import { FeedSortControls, type FeedSortOption, type SortOrder } from '@/components/feed';
 import { useAuth } from '@/lib/auth/context';
 import type { CardListItem, PaginatedResponse } from '@/types/card';
-
-const CARDS_PER_PAGE = 20;
+import { CARDS_PER_PAGE } from '@/lib/constants';
 
 export default function FeedPage() {
   const { user } = useAuth();

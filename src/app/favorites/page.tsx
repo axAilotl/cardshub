@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout';
 import { CardGrid } from '@/components/cards';
+import { Pagination } from '@/components/ui';
 import { useAuth } from '@/lib/auth/context';
 import Link from 'next/link';
 import type { CardListItem } from '@/types/card';
+import { CARDS_PER_PAGE } from '@/lib/constants';
 
 export default function FavoritesPage() {
   const { user, isLoading: authLoading } = useAuth();
@@ -13,26 +15,21 @@ export default function FavoritesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
+
+  const totalPages = Math.ceil(total / CARDS_PER_PAGE);
 
   const fetchFavorites = useCallback(async (pageNum: number) => {
     if (!user) return;
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/users/${user.username}/favorites?page=${pageNum}&limit=24`);
+      const response = await fetch(`/api/users/${user.username}/favorites?page=${pageNum}&limit=${CARDS_PER_PAGE}`);
       if (!response.ok) {
         throw new Error('Failed to fetch favorites');
       }
       const data = await response.json();
-
-      if (pageNum === 1) {
-        setCards(data.items);
-      } else {
-        setCards(prev => [...prev, ...data.items]);
-      }
-      setHasMore(data.hasMore);
+      setCards(data.items);
       setTotal(data.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load favorites');
@@ -43,16 +40,16 @@ export default function FavoritesPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      fetchFavorites(1);
+      fetchFavorites(page);
     } else if (!authLoading && !user) {
       setIsLoading(false);
     }
-  }, [authLoading, user, fetchFavorites]);
+  }, [authLoading, user, fetchFavorites, page]);
 
-  const loadMore = () => {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchFavorites(nextPage);
+  const goToPage = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
+    }
   };
 
   // Not logged in
@@ -88,25 +85,15 @@ export default function FavoritesPage() {
           <div>
             <h1 className="text-2xl font-bold gradient-text">Your Favorites</h1>
             <p className="text-starlight/60 mt-1">
-              {total > 0 ? `${total} card${total !== 1 ? 's' : ''} saved` : 'Cards you love, all in one place'}
+              {total > 0
+                ? `${total} card${total !== 1 ? 's' : ''} saved${totalPages > 1 ? ` • Page ${page} of ${totalPages}` : ''}`
+                : 'Cards you love, all in one place'}
             </p>
           </div>
         </div>
 
         {/* Content */}
-        {isLoading && cards.length === 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="glass-card rounded-xl overflow-hidden animate-pulse">
-                <div className="aspect-[3/4] bg-cosmic-teal/50" />
-                <div className="p-3 space-y-2">
-                  <div className="h-4 bg-cosmic-teal/50 rounded w-3/4" />
-                  <div className="h-3 bg-cosmic-teal/50 rounded w-1/2" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : error ? (
+        {error ? (
           <div className="text-center py-16">
             <p className="text-red-400">{error}</p>
             <button
@@ -116,7 +103,7 @@ export default function FavoritesPage() {
               Try Again
             </button>
           </div>
-        ) : cards.length === 0 ? (
+        ) : cards.length === 0 && !isLoading ? (
           <div className="text-center py-16">
             <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-nebula/20 flex items-center justify-center">
               <svg className="w-10 h-10 text-starlight/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -139,18 +126,15 @@ export default function FavoritesPage() {
           </div>
         ) : (
           <>
-            <CardGrid cards={cards} />
+            <CardGrid cards={cards} isLoading={isLoading} />
 
-            {hasMore && (
-              <div className="text-center pt-6">
-                <button
-                  onClick={loadMore}
-                  disabled={isLoading}
-                  className="px-6 py-3 bg-nebula/20 hover:bg-nebula/30 rounded-lg font-medium transition-colors disabled:opacity-50"
-                >
-                  {isLoading ? 'Loading...' : 'Load More'}
-                </button>
-              </div>
+            {!isLoading && totalPages > 1 && (
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={goToPage}
+                className="mt-8"
+              />
             )}
           </>
         )}

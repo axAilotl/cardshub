@@ -6,9 +6,12 @@ import Link from 'next/link';
 import { AppShell } from '@/components/layout';
 import { CardGrid } from '@/components/cards/card-grid';
 import { CardModal } from '@/components/cards/card-modal';
+import { Pagination } from '@/components/ui';
 import type { CardListItem } from '@/types/card';
 import { useAuth } from '@/lib/auth/context';
 import { cn } from '@/lib/utils/cn';
+import { formatMonthYear } from '@/lib/utils/format';
+import { CARDS_PER_PAGE } from '@/lib/constants';
 
 interface UserProfile {
   id: string;
@@ -44,9 +47,10 @@ export default function UserProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('cards');
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
   const [selectedCard, setSelectedCard] = useState<CardListItem | null>(null);
+
+  const totalPages = Math.ceil(total / CARDS_PER_PAGE);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followLoading, setFollowLoading] = useState(false);
@@ -110,62 +114,47 @@ export default function UserProfilePage() {
   }, [username]);
 
   // Fetch cards/favorites
-  const fetchCards = useCallback(async (resetPage = false) => {
+  const fetchCards = useCallback(async (pageNum: number) => {
     if (!profile) return;
 
     try {
       setCardsLoading(true);
-      const currentPage = resetPage ? 1 : page;
       const endpoint = activeTab === 'cards'
         ? `/api/users/${encodeURIComponent(username)}/cards`
         : `/api/users/${encodeURIComponent(username)}/favorites`;
 
-      const res = await fetch(`${endpoint}?page=${currentPage}&limit=24`);
+      const res = await fetch(`${endpoint}?page=${pageNum}&limit=${CARDS_PER_PAGE}`);
       if (!res.ok) throw new Error('Failed to fetch cards');
 
       const data = await res.json();
-
-      if (resetPage) {
-        setCards(data.items);
-        setPage(1);
-      } else if (currentPage === 1) {
-        setCards(data.items);
-      } else {
-        setCards(prev => [...prev, ...data.items]);
-      }
-
-      setHasMore(data.hasMore);
+      setCards(data.items);
       setTotal(data.total);
     } catch (err) {
       console.error('Error fetching cards:', err);
     } finally {
       setCardsLoading(false);
     }
-  }, [profile, username, activeTab, page]);
+  }, [profile, username, activeTab]);
 
+  // Reset to page 1 when tab changes
   useEffect(() => {
     if (profile) {
-      fetchCards(true);
+      setPage(1);
+      fetchCards(1);
     }
   }, [profile, activeTab]);
 
+  // Fetch when page changes
   useEffect(() => {
     if (profile && page > 1) {
-      fetchCards();
+      fetchCards(page);
     }
-  }, [page]);
+  }, [page, fetchCards]);
 
-  const handleLoadMore = () => {
-    if (!cardsLoading && hasMore) {
-      setPage(p => p + 1);
+  const goToPage = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
     }
-  };
-
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-    });
   };
 
   if (loading) {
@@ -231,7 +220,7 @@ export default function UserProfilePage() {
                 <p className="text-starlight/70 mb-2">@{profile.username}</p>
               )}
               <p className="text-sm text-starlight/50">
-                Joined {formatDate(profile.createdAt)}
+                Joined {formatMonthYear(profile.createdAt)}
               </p>
 
               {/* Bio */}
@@ -373,21 +362,17 @@ export default function UserProfilePage() {
           <>
             <CardGrid
               cards={cards}
-              isLoading={cardsLoading && cards.length === 0}
+              isLoading={cardsLoading}
               onQuickView={setSelectedCard}
             />
 
-            {/* Load More */}
-            {hasMore && (
-              <div className="mt-8 text-center">
-                <button
-                  onClick={handleLoadMore}
-                  disabled={cardsLoading}
-                  className="px-6 py-2 bg-nebula/20 hover:bg-nebula/30 disabled:opacity-50 text-starlight rounded-lg transition-colors"
-                >
-                  {cardsLoading ? 'Loading...' : `Load More (${cards.length} of ${total})`}
-                </button>
-              </div>
+            {!cardsLoading && totalPages > 1 && (
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={goToPage}
+                className="mt-8"
+              />
             )}
           </>
         )}

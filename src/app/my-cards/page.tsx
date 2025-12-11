@@ -4,11 +4,12 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { AppShell } from '@/components/layout';
-import { Button } from '@/components/ui';
+import { Button, Pagination } from '@/components/ui';
 import { useAuth } from '@/lib/auth/context';
 import { cn } from '@/lib/utils/cn';
 import { formatCount } from '@/lib/utils/format';
 import type { CardListItem } from '@/types/card';
+import { CARDS_PER_PAGE } from '@/lib/constants';
 
 type VisibilityFilter = 'all' | 'public' | 'private' | 'unlisted';
 type SortOption = 'newest' | 'oldest' | 'name' | 'downloads' | 'upvotes';
@@ -181,20 +182,20 @@ export default function MyCardsPage() {
   const [cards, setCards] = useState<MyCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
 
-  const fetchCards = useCallback(async (resetPage = false) => {
+  const totalPages = Math.ceil(total / CARDS_PER_PAGE);
+
+  const fetchCards = useCallback(async (pageNum: number) => {
     if (!user) return;
 
     setLoading(true);
     try {
-      const currentPage = resetPage ? 1 : page;
       const params = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: '24',
+        page: pageNum.toString(),
+        limit: CARDS_PER_PAGE.toString(),
         visibility: visibilityFilter,
         sort: sortBy,
         includePrivate: 'true',
@@ -204,40 +205,33 @@ export default function MyCardsPage() {
       if (!res.ok) throw new Error('Failed to fetch cards');
 
       const data = await res.json();
-
-      if (resetPage) {
-        setCards(data.items);
-        setPage(1);
-      } else if (currentPage === 1) {
-        setCards(data.items);
-      } else {
-        setCards(prev => [...prev, ...data.items]);
-      }
-
-      setHasMore(data.hasMore);
+      setCards(data.items);
       setTotal(data.total);
     } catch (err) {
       console.error('Error fetching cards:', err);
     } finally {
       setLoading(false);
     }
-  }, [user, page, visibilityFilter, sortBy]);
+  }, [user, visibilityFilter, sortBy]);
 
+  // Reset to page 1 when filters change
   useEffect(() => {
     if (user) {
-      fetchCards(true);
+      setPage(1);
+      fetchCards(1);
     }
   }, [user, visibilityFilter, sortBy]);
 
+  // Fetch when page changes
   useEffect(() => {
     if (user && page > 1) {
-      fetchCards();
+      fetchCards(page);
     }
-  }, [page]);
+  }, [page, fetchCards]);
 
-  const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(p => p + 1);
+  const goToPage = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
     }
   };
 
@@ -418,13 +412,13 @@ export default function MyCardsPage() {
               ))}
             </div>
 
-            {/* Load more */}
-            {hasMore && (
-              <div className="mt-8 text-center">
-                <Button onClick={handleLoadMore} variant="secondary" disabled={loading}>
-                  {loading ? 'Loading...' : `Load More (${cards.length} of ${total})`}
-                </Button>
-              </div>
+            {!loading && totalPages > 1 && (
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={goToPage}
+                className="mt-8"
+              />
             )}
           </>
         )}
