@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { CardListItem, SortOption, PaginatedResponse } from '@/types/card';
 import { useSettings } from '@/lib/settings';
@@ -116,14 +116,16 @@ export function useCardSearch(): UseCardSearchReturn {
     return Array.from(merged);
   }, [excludeTags, settings.bannedTags]);
 
+  // Track if we're currently fetching to avoid double-fetches
+  const isFetchingRef = useRef(false);
+  // Track the last fetched params to avoid redundant fetches
+  const lastFetchRef = useRef<string>('');
+
   // Fetch cards for current page
   const fetchCards = useCallback(async (targetPage: number) => {
-    setIsLoading(true);
-
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (includeTags.length > 0) params.set('tags', includeTags.join(','));
-    // Use merged excludeTags (URL + banned from settings)
     if (allExcludeTags.length > 0) params.set('excludeTags', allExcludeTags.join(','));
     params.set('sort', sort);
     params.set('page', targetPage.toString());
@@ -133,8 +135,19 @@ export function useCardSearch(): UseCardSearchReturn {
     if (hasLorebook) params.set('hasLorebook', 'true');
     if (hasEmbeddedImages) params.set('hasEmbeddedImages', 'true');
 
+    const fetchKey = params.toString();
+
+    // Skip if we just fetched with these exact params
+    if (fetchKey === lastFetchRef.current || isFetchingRef.current) {
+      return;
+    }
+
+    isFetchingRef.current = true;
+    lastFetchRef.current = fetchKey;
+    setIsLoading(true);
+
     try {
-      const res = await fetch(`/api/cards?${params.toString()}`);
+      const res = await fetch(`/api/cards?${fetchKey}`);
       if (!res.ok) {
         console.error('Failed to fetch cards:', res.status, res.statusText);
         return;
@@ -147,6 +160,7 @@ export function useCardSearch(): UseCardSearchReturn {
       console.error('Failed to fetch cards:', error);
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
   }, [search, includeTags, allExcludeTags, sort, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages]);
 
@@ -167,25 +181,41 @@ export function useCardSearch(): UseCardSearchReturn {
     router.replace(newUrl, { scroll: false });
   }, [search, includeTags, excludeTags, sort, minTokens, hasAltGreetings, hasLorebook, hasEmbeddedImages, page, router]);
 
-  // Fetch cards when filters change - reset to page 1
+  // Single effect to fetch cards - runs when page or filters change
+  const filtersKey = useMemo(() =>
+    JSON.stringify({ includeTags, allExcludeTags, sort, hasAltGreetings, hasLorebook, hasEmbeddedImages }),
+    [includeTags, allExcludeTags, sort, hasAltGreetings, hasLorebook, hasEmbeddedImages]
+  );
+
+  const prevFiltersKeyRef = useRef(filtersKey);
+
   useEffect(() => {
-    setPage(1);
-    fetchCards(1);
-  }, [includeTags, allExcludeTags, sort, hasAltGreetings, hasLorebook, hasEmbeddedImages]); // eslint-disable-line react-hooks/exhaustive-deps
+    const filtersChanged = prevFiltersKeyRef.current !== filtersKey;
+    prevFiltersKeyRef.current = filtersKey;
+
+    if (filtersChanged && page !== 1) {
+      // Filters changed, reset to page 1
+      setPage(1);
+      // fetchCards will be called by the page change
+    } else {
+      // Either page changed or initial load
+      fetchCards(page);
+    }
+  }, [page, filtersKey, fetchCards]);
 
   // Debounced search - reset to page 1
   useEffect(() => {
     const timer = setTimeout(() => {
-      setPage(1);
-      fetchCards(1);
+      if (page !== 1) {
+        setPage(1);
+      } else {
+        // Already on page 1, just fetch
+        lastFetchRef.current = ''; // Clear to force refetch
+        fetchCards(1);
+      }
     }, 300);
     return () => clearTimeout(timer);
   }, [search, minTokens]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetch when page changes (from pagination click)
-  useEffect(() => {
-    fetchCards(page);
-  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigate to a specific page
   const goToPage = (newPage: number) => {
