@@ -173,7 +173,14 @@ export async function GET(request: NextRequest) {
       hasMore: offset + paginatedIds.length < total,
     };
 
-    return NextResponse.json(response);
+    // Cache anonymous feed at edge (personalized feeds can't be cached)
+    const cacheControl = userId
+      ? 'private, no-cache'
+      : 'public, s-maxage=60, stale-while-revalidate=300';
+
+    return NextResponse.json(response, {
+      headers: { 'Cache-Control': cacheControl },
+    });
   } catch (error) {
     console.error('Error fetching feed:', error);
     return NextResponse.json(
