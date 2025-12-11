@@ -5,27 +5,29 @@ import Link from 'next/link';
 import { AppShell } from '@/components/layout';
 import { CardGrid } from '@/components/cards/card-grid';
 import { CardModal } from '@/components/cards/card-modal';
-import { Button } from '@/components/ui';
+import { Button, Pagination } from '@/components/ui';
 import { useAuth } from '@/lib/auth/context';
 import type { CardListItem, PaginatedResponse } from '@/types/card';
+
+const CARDS_PER_PAGE = 20;
 
 export default function FeedPage() {
   const { user } = useAuth();
   const [cards, setCards] = useState<CardListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedCard, setSelectedCard] = useState<CardListItem | null>(null);
 
-  const fetchFeed = useCallback(async (pageNum: number, append = false) => {
+  const totalPages = Math.ceil(total / CARDS_PER_PAGE);
+
+  const fetchFeed = useCallback(async (pageNum: number) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/feed?page=${pageNum}&limit=24`);
+      const res = await fetch(`/api/feed?page=${pageNum}&limit=${CARDS_PER_PAGE}`);
       if (res.ok) {
         const data: PaginatedResponse<CardListItem> = await res.json();
-        setCards(prev => append ? [...prev, ...data.items] : data.items);
-        setHasMore(data.hasMore);
+        setCards(data.items);
         setTotal(data.total);
       }
     } catch (err) {
@@ -36,13 +38,13 @@ export default function FeedPage() {
   }, []);
 
   useEffect(() => {
-    fetchFeed(1);
-  }, [fetchFeed]);
+    fetchFeed(page);
+  }, [fetchFeed, page]);
 
-  const loadMore = () => {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchFeed(nextPage, true);
+  const goToPage = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
+    }
   };
 
   return (
@@ -75,6 +77,14 @@ export default function FeedPage() {
           </div>
         )}
 
+        {/* Results count */}
+        {!isLoading && (
+          <div className="mb-4 text-sm text-starlight/60">
+            {total} {total === 1 ? 'character' : 'characters'} found
+            {totalPages > 1 && ` • Page ${page} of ${totalPages}`}
+          </div>
+        )}
+
         {/* Feed grid - uses same CardGrid component as explore */}
         {cards.length === 0 && !isLoading ? (
           <div className="text-center py-12">
@@ -96,32 +106,20 @@ export default function FeedPage() {
           <>
             <CardGrid
               cards={cards}
-              isLoading={isLoading && cards.length === 0}
+              isLoading={isLoading}
               onQuickView={setSelectedCard}
             />
 
-            {/* Load more */}
-            {hasMore && (
-              <div className="mt-8 text-center">
-                <Button onClick={loadMore} variant="secondary" disabled={isLoading}>
-                  {isLoading ? 'Loading...' : `Load More (${cards.length} of ${total})`}
-                </Button>
-              </div>
+            {/* Pagination */}
+            {!isLoading && totalPages > 1 && (
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={goToPage}
+                className="mt-8"
+              />
             )}
           </>
-        )}
-
-        {/* Loading indicator for pagination */}
-        {isLoading && cards.length > 0 && (
-          <div className="mt-8 text-center">
-            <div className="inline-flex items-center gap-2 text-starlight/60">
-              <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              Loading more...
-            </div>
-          </div>
         )}
 
         {/* Card Modal */}
