@@ -1,4 +1,8 @@
 import type { NextConfig } from "next";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   experimental: {
@@ -30,13 +34,22 @@ const nextConfig: NextConfig = {
       }
     }
 
-    // Fallback for Node.js modules used by @character-foundry/core (fflate)
+    // For client-side: stub out Node.js modules and force ESM fflate
     if (!isServer) {
       config.resolve = config.resolve || {};
       config.resolve.fallback = {
         ...config.resolve.fallback,
         module: false,
         worker_threads: false,
+        fs: false,
+        path: false,
+        crypto: false,
+      };
+      // Force fflate to use the browser-compatible ESM version instead of CJS
+      // The CJS version uses createRequire which doesn't exist in browsers
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'fflate': path.resolve(__dirname, 'node_modules/fflate/esm/browser.js'),
       };
     }
 

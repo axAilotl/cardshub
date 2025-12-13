@@ -30,8 +30,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     };
     const contentType = contentTypes[ext || ''] || 'application/octet-stream';
 
+    // Public paths that don't require metadata lookup (processed images)
+    // thumbs/ - main card thumbnails
+    // thumbs/assets/ - asset thumbnails
+    // images/ - processed embedded images
+    const isPublicPath = pathKey.startsWith('thumbs/') || pathKey.startsWith('images/');
+
     // Visibility enforcement - ALWAYS require metadata on Cloudflare/R2 (fail closed)
-    const meta = await getUploadByPath(pathKey);
+    // EXCEPT for public processed image paths
+    const meta = isPublicPath ? null : await getUploadByPath(pathKey);
     const session = await getSession();
     const token = request.nextUrl.searchParams.get('token');
 
@@ -43,19 +50,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
 
       // CRITICAL: Fail closed - require metadata for R2 access
-      if (!meta) {
+      // Public paths (thumbs/, images/) are allowed without metadata
+      if (!meta && !isPublicPath) {
         console.warn(`[Uploads] Access denied - no metadata for R2 path: ${pathKey}`);
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      // Enforce visibility based on metadata
-      if (meta.visibility === 'private') {
-        if (!session || (session.user.id !== meta.uploader_id && !session.user.isAdmin)) {
-          return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-      } else if (meta.visibility === 'unlisted') {
-        if (!token || !verifyToken(token, meta.access_token_hash)) {
-          return NextResponse.json({ error: 'Invalid or missing token' }, { status: 403 });
+      // Enforce visibility based on metadata (if not a public path)
+      if (meta) {
+        if (meta.visibility === 'private') {
+          if (!session || (session.user.id !== meta.uploader_id && !session.user.isAdmin)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+          }
+        } else if (meta.visibility === 'unlisted') {
+          if (!token || !verifyToken(token, meta.access_token_hash)) {
+            return NextResponse.json({ error: 'Invalid or missing token' }, { status: 403 });
+          }
         }
       }
 
@@ -74,7 +84,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return new NextResponse(data, {
         headers: {
           'Content-Type': contentType,
-          'Cache-Control': meta.visibility === 'private'
+          'Cache-Control': meta?.visibility === 'private'
             ? 'private, max-age=0, no-store'
             : 'public, max-age=31536000, immutable',
           'Content-Length': data.byteLength.toString(),

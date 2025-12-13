@@ -4,8 +4,8 @@ import { parseCard } from '@character-foundry/loader';
 import { isVoxta, readVoxta, voxtaToCCv3, type VoxtaData, type VoxtaBook } from '@character-foundry/voxta';
 import { toUint8Array } from '@character-foundry/core';
 import { countCardTokens } from '@/lib/client/tokenizer';
-import { generateThumbnailBuffer } from '@/lib/image/thumbnail';
 import { saveAssets } from '@/lib/image';
+import { processThumbnail, processCardImages } from '@/lib/image/process';
 import { generateId, generateSlug } from '@/lib/utils';
 import { store, getPublicUrl } from '@/lib/storage';
 import { getSession } from '@/lib/auth';
@@ -73,14 +73,20 @@ async function handleVoxtaCollectionUpload(
     const thumbChar = voxtaData.characters.find(c => c.id === pkg.ThumbnailResource!.Id);
     if (thumbChar?.thumbnail) {
       const thumbBuffer = Buffer.from(thumbChar.thumbnail as Uint8Array);
-      const thumbName = `collections/${collectionId}_thumb.png`;
-      await store(thumbBuffer, thumbName);
-      thumbnailPath = isCloudflareRuntime()
-        ? `/api/thumb/${thumbName}?type=main`
-        : getPublicUrl(`file:///${thumbName}`);
-      if (thumbBuffer.length > 24) {
-        thumbnailWidth = thumbBuffer.readUInt32BE(16);
-        thumbnailHeight = thumbBuffer.readUInt32BE(20);
+      try {
+        const thumbPath = await processThumbnail(thumbBuffer, `collection_${collectionId}`, 'main');
+        thumbnailPath = `/api/uploads/${thumbPath}`;
+        thumbnailWidth = 500;
+        thumbnailHeight = 750;
+      } catch {
+        // Fallback: store original
+        const thumbName = `collections/${collectionId}_thumb.png`;
+        await store(thumbBuffer, thumbName);
+        thumbnailPath = getPublicUrl(isCloudflareRuntime() ? `r2://${thumbName}` : `file:///${thumbName}`);
+        if (thumbBuffer.length > 24) {
+          thumbnailWidth = thumbBuffer.readUInt32BE(16);
+          thumbnailHeight = thumbBuffer.readUInt32BE(20);
+        }
       }
     }
   }
@@ -90,14 +96,20 @@ async function handleVoxtaCollectionUpload(
     const firstChar = voxtaData.characters[0];
     if (firstChar.thumbnail) {
       const thumbBuffer = Buffer.from(firstChar.thumbnail as Uint8Array);
-      const thumbName = `collections/${collectionId}_thumb.png`;
-      await store(thumbBuffer, thumbName);
-      thumbnailPath = isCloudflareRuntime()
-        ? `/api/thumb/${thumbName}?type=main`
-        : getPublicUrl(`file:///${thumbName}`);
-      if (thumbBuffer.length > 24) {
-        thumbnailWidth = thumbBuffer.readUInt32BE(16);
-        thumbnailHeight = thumbBuffer.readUInt32BE(20);
+      try {
+        const thumbPath = await processThumbnail(thumbBuffer, `collection_${collectionId}`, 'main');
+        thumbnailPath = `/api/uploads/${thumbPath}`;
+        thumbnailWidth = 500;
+        thumbnailHeight = 750;
+      } catch {
+        // Fallback: store original
+        const thumbName = `collections/${collectionId}_thumb.png`;
+        await store(thumbBuffer, thumbName);
+        thumbnailPath = getPublicUrl(isCloudflareRuntime() ? `r2://${thumbName}` : `file:///${thumbName}`);
+        if (thumbBuffer.length > 24) {
+          thumbnailWidth = thumbBuffer.readUInt32BE(16);
+          thumbnailHeight = thumbBuffer.readUInt32BE(20);
+        }
       }
     }
   }
@@ -182,27 +194,17 @@ async function handleVoxtaCollectionUpload(
         charImageHeight = imgBuffer.readUInt32BE(20);
       }
 
-      // Generate thumbnail
-      if (isCloudflareRuntime()) {
-        charThumbPath = `/api/thumb/${imageName}?type=main`;
-        const isLandscape = charImageWidth && charImageHeight && charImageWidth > charImageHeight;
-        charThumbWidth = isLandscape ? 750 : 500;
-        charThumbHeight = isLandscape
-          ? Math.round((charImageHeight! * 750) / charImageWidth!)
-          : Math.round((charImageHeight! * 500) / charImageWidth!);
-      } else {
-        try {
-          const thumbResult = await generateThumbnailBuffer(imgBuffer, 'main');
-          const thumbName = `thumbnails/${cardId}.webp`;
-          await store(thumbResult.buffer, thumbName);
-          charThumbPath = getPublicUrl(`file:///${thumbName}`);
-          charThumbWidth = thumbResult.width;
-          charThumbHeight = thumbResult.height;
-        } catch {
-          charThumbPath = `/api/thumb/${imageName}?type=main`;
-          charThumbWidth = 500;
-          charThumbHeight = 750;
-        }
+      // Generate and store thumbnail (processed once, served directly)
+      try {
+        const thumbPath = await processThumbnail(imgBuffer, cardId, 'main');
+        charThumbPath = `/api/uploads/${thumbPath}`;
+        charThumbWidth = 500;
+        charThumbHeight = 750;
+      } catch {
+        // Fallback: serve original image
+        charThumbPath = charImagePath;
+        charThumbWidth = charImageWidth;
+        charThumbHeight = charImageHeight;
       }
     }
 
@@ -212,6 +214,15 @@ async function handleVoxtaCollectionUpload(
     // Combine tags: character tags + user tags + "collection" tag
     const charTags = cardData.tags || [];
     const allTags = [...new Set([...charTags, ...tagSlugs, 'collection'])];
+
+    // Process embedded images in card data
+    let displayCcv3: unknown = ccv3;
+    try {
+      const { displayData } = await processCardImages(ccv3 as unknown as Record<string, unknown>, cardId);
+      displayCcv3 = displayData;
+    } catch (imgError) {
+      console.error(`[Collection] Failed to process embedded images for ${cardData.name}:`, imgError);
+    }
 
     // Create card with collection reference
     try {
@@ -248,7 +259,7 @@ async function handleVoxtaCollectionUpload(
         thumbnailPath: charThumbPath,
         thumbnailWidth: charThumbWidth,
         thumbnailHeight: charThumbHeight,
-        cardData: JSON.stringify(ccv3),
+        cardData: JSON.stringify(displayCcv3),
       },
     });
       createdCount++;
@@ -687,9 +698,9 @@ export async function POST(request: NextRequest) {
       // Store main image via storage abstraction
       const imageName = `${id}.png`;
       await store(mainImage, imageName);
-      
+
       // Get public URL for the stored image
-      imagePath = isCloudflareRuntime() 
+      imagePath = isCloudflareRuntime()
         ? getPublicUrl(`r2://${imageName}`)
         : getPublicUrl(`file:///${imageName}`);
 
@@ -699,38 +710,19 @@ export async function POST(request: NextRequest) {
         imageHeight = mainImage.readUInt32BE(20);
       }
 
-      // Generate thumbnail
-      if (isCloudflareRuntime()) {
-        // On Cloudflare: Use /api/thumb/ route which applies cf.image transformations
-        thumbnailPath = `/api/thumb/${imageName}?type=main`;
-        // Estimate thumbnail dimensions (500px portrait width)
-        const isLandscape = imageWidth && imageHeight && imageWidth > imageHeight;
-        thumbnailWidth = isLandscape ? 750 : 500;
-        thumbnailHeight = isLandscape
-          ? Math.round((imageHeight! * 750) / imageWidth!)
-          : Math.round((imageHeight! * 500) / imageWidth!);
-      } else {
-        // On Node.js: Generate and store WebP thumbnail with Sharp
-        try {
-          const thumbResult = await generateThumbnailBuffer(mainImage, 'main');
-          const thumbName = `thumbnails/${id}.webp`;
-          await store(thumbResult.buffer, thumbName);
-
-          thumbnailPath = getPublicUrl(`file:///${thumbName}`);
-          thumbnailWidth = thumbResult.width;
-          thumbnailHeight = thumbResult.height;
-        } catch (error) {
-          console.error('Failed to generate thumbnail:', error);
-          // Fallback to /api/thumb/ route
-          thumbnailPath = `/api/thumb/${imageName}?type=main`;
-          const isLandscape = imageWidth && imageHeight && imageWidth > imageHeight;
-          thumbnailWidth = isLandscape ? 750 : 500;
-          thumbnailHeight = isLandscape && imageWidth && imageHeight
-            ? Math.round((imageHeight * 750) / imageWidth)
-            : imageWidth && imageHeight
-              ? Math.round((imageHeight * 500) / imageWidth)
-              : 750;
-        }
+      // Generate and store thumbnail (processed once, served directly)
+      try {
+        const thumbPath = await processThumbnail(new Uint8Array(mainImage), id, 'main');
+        thumbnailPath = `/api/uploads/${thumbPath}`;
+        // Thumbnail dimensions after processing (500x750 for main)
+        thumbnailWidth = 500;
+        thumbnailHeight = 750;
+      } catch (error) {
+        console.error('Failed to generate thumbnail:', error);
+        // Fallback: serve original image
+        thumbnailPath = imagePath;
+        thumbnailWidth = imageWidth;
+        thumbnailHeight = imageHeight;
       }
     }
 
@@ -777,8 +769,22 @@ export async function POST(request: NextRequest) {
     const actualAssetsCount = savedAssetsData.length || extractedAssets.length;
     const hasActualAssets = actualAssetsCount > 0;
 
+    // Process embedded images in card data (download, convert to webp, rewrite URLs)
+    // This creates display-ready data with processed images
+    let displayCardData = parsedCard.raw;
+    try {
+      const { displayData } = await processCardImages(
+        parsedCard.raw as Record<string, unknown>,
+        id
+      );
+      displayCardData = displayData;
+    } catch (error) {
+      console.error('Failed to process embedded images:', error);
+      // Continue with original data if processing fails
+    }
+
     // Enforce card data size limit (10MB max for cardData JSON)
-    const cardDataJson = JSON.stringify(parsedCard.raw);
+    const cardDataJson = JSON.stringify(displayCardData);
     const MAX_CARD_DATA_SIZE = 10 * 1024 * 1024; // 10MB
     if (cardDataJson.length > MAX_CARD_DATA_SIZE) {
       return NextResponse.json(

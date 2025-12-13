@@ -1,6 +1,7 @@
-import { generateThumbnailBuffer } from './thumbnail';
+import { convertToWebp } from './process';
 import { store, getPublicUrl } from '@/lib/storage';
-import { isCloudflare } from '@/lib/cloudflare/env';
+import { isCloudflare, getR2 } from '@/lib/cloudflare/env';
+import { isCloudflareRuntime } from '@/lib/db';
 
 export interface ExtractedAsset {
   name: string;
@@ -25,6 +26,9 @@ export interface SaveAssetsResult {
 }
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'];
+
+// Asset thumbnail size (smaller than main thumbnails)
+const ASSET_THUMB_SIZE = { width: 300, height: 300 };
 
 /**
  * Save extracted assets using the configured storage driver
@@ -54,30 +58,48 @@ async function processAsset(
 
     // Generate thumbnail for images
     if (isImageFile(asset.ext)) {
-      if (isCloudflare()) {
-        // On Cloudflare: Use /api/thumb/ route which uses IMAGES binding
-        // Get dimensions from image buffer if PNG
-        if (asset.ext.toLowerCase() === 'png' && bufferData.length > 24) {
-          savedAsset.width = bufferData.readUInt32BE(16);
-          savedAsset.height = bufferData.readUInt32BE(20);
-        }
-        savedAsset.thumbnailPath = `/api/thumb/${storagePath}?type=asset`;
-      } else {
-        // On Node.js: Generate and store WebP thumbnail
-        try {
-          const thumbResult = await generateThumbnailBuffer(bufferData, 'asset');
-          const thumbFileName = `${index}_${sanitizeFileName(asset.name)}.webp`;
-          const thumbStoragePath = `assets/${cardId}/thumbnails/${thumbFileName}`;
+      // Get dimensions from image buffer if PNG
+      if (asset.ext.toLowerCase() === 'png' && bufferData.length > 24) {
+        savedAsset.width = bufferData.readUInt32BE(16);
+        savedAsset.height = bufferData.readUInt32BE(20);
+      }
 
-          await store(thumbResult.buffer, thumbStoragePath);
-          savedAsset.thumbnailPath = getPublicUrl(`file:///${thumbStoragePath}`);
-          savedAsset.width = thumbResult.originalWidth;
-          savedAsset.height = thumbResult.originalHeight;
-        } catch (error) {
-          console.error(`Failed to generate thumbnail for asset ${asset.name}:`, error);
-          // Fallback to /api/thumb/ route
-          savedAsset.thumbnailPath = `/api/thumb/${storagePath}?type=asset`;
+      // Process and store thumbnail
+      try {
+        const processed = await convertToWebp(new Uint8Array(bufferData), {
+          width: ASSET_THUMB_SIZE.width,
+          height: ASSET_THUMB_SIZE.height,
+          quality: 70,
+        });
+
+        const thumbPath = `thumbs/assets/${cardId}/${index}_${sanitizeFileName(asset.name)}.webp`;
+
+        // Store in R2 or local filesystem
+        if (isCloudflareRuntime()) {
+          const r2 = await getR2();
+          if (r2) {
+            await r2.put(thumbPath, processed.data, {
+              httpMetadata: { contentType: 'image/webp' },
+            });
+          }
+        } else {
+          const fs = await import('fs');
+          const nodePath = await import('path');
+          const uploadsDir = process.env.UPLOADS_DIR || nodePath.join(process.cwd(), 'uploads');
+          const fullPath = nodePath.join(uploadsDir, thumbPath);
+
+          const dir = nodePath.dirname(fullPath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+
+          fs.writeFileSync(fullPath, Buffer.from(processed.data));
         }
+
+        savedAsset.thumbnailPath = `/api/uploads/${thumbPath}`;
+      } catch (error) {
+        console.error(`Failed to generate thumbnail for asset ${asset.name}:`, error);
+        // No fallback - just don't set thumbnailPath
       }
     }
 
