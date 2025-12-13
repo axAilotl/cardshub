@@ -215,26 +215,6 @@ export function AssetsSection({ assets, savedAssets }: AssetsSectionProps) {
                   </div>
                 </div>
 
-                {/* Download button */}
-                <div className="flex gap-2">
-                  <a
-                    href={selectedAsset.path}
-                    download={`${selectedAsset.name}.${selectedAsset.ext}`}
-                    className="px-3 py-1.5 text-sm rounded bg-nebula/20 text-nebula hover:bg-nebula/30 transition-colors"
-                  >
-                    Download Asset
-                  </a>
-                  {selectedAsset.isImage && !selectedAsset.path.startsWith('data:') && (
-                    <a
-                      href={selectedAsset.path}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-1.5 text-sm rounded bg-cosmic-teal/20 text-starlight/70 hover:bg-cosmic-teal/30 transition-colors"
-                    >
-                      Open in New Tab
-                    </a>
-                  )}
-                </div>
               </div>
             ) : (
               <p className="text-starlight/50 italic">Select an asset to view details.</p>
