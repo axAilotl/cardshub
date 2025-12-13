@@ -336,6 +336,7 @@ export async function processCardImages(
   cardId: string
 ): Promise<{ displayData: Record<string, unknown>; urlMapping: Map<string, string> }> {
   console.log(`[ProcessCardImages] Starting for card ${cardId}`);
+  console.log(`[ProcessCardImages] Card data keys:`, Object.keys(cardData));
   const displayData = JSON.parse(JSON.stringify(cardData)); // Deep clone
   const allUrlMappings = new Map<string, string>();
 
@@ -354,6 +355,9 @@ export async function processCardImages(
   // Process data.* fields (CCv3 stores most content under data)
   const data = displayData.data as Record<string, unknown> | undefined;
   console.log(`[ProcessCardImages] Has data object: ${!!data}`);
+  if (data) {
+    console.log(`[ProcessCardImages] Data keys:`, Object.keys(data));
+  }
 
   for (const field of fieldsToProcess) {
     // Check root level
@@ -399,7 +403,7 @@ export async function processCardImages(
     }
   }
 
-  console.log(`[ProcessCardImages] Total URLs rewritten: ${allUrlMappings.size}`);
+  console.log(`[ProcessCardImages] Total URLs rewritten from text fields: ${allUrlMappings.size}`);
 
   // Process character book / lorebook entries
   const characterBook = (data?.character_book ?? displayData.character_book) as Record<string, unknown> | undefined;
