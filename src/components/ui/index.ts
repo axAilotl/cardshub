@@ -20,3 +20,4 @@ export {
   ChevronDownIcon,
   CollectionIcon,
 } from './icons';
+export { MetadataBadge } from './metadata-badge';
