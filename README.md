@@ -125,6 +125,13 @@ https://github.com/orgs/character-foundry/packages → Package Settings → Visi
 ### Push doesn't update production
 Deployment is manual: `npm run cf:build && npm run cf:deploy`
 
+### Browser crashes with `createRequire is not a function`
+Update `@character-foundry/*` packages - older versions bundled fflate's Node.js code:
+```bash
+GITHUB_TOKEN=xxx npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
+```
+Verify fix: `grep -l "createRequire" node_modules/@character-foundry/*/dist/*` should return nothing.
+
 ## License
 
 MIT

@@ -229,13 +229,13 @@ Uses `@character-foundry/*` packages from GitHub Packages registry:
 **Core Packages:**
 - `@character-foundry/loader` (0.1.8) - Universal card loader (detects format, parses all types)
 - `@character-foundry/schemas` (0.2.0) - CCv2/CCv3 TypeScript types with **Zod validation schemas**
-- `@character-foundry/core` (0.1.0) - Shared utilities (toUint8Array, etc.)
+- `@character-foundry/core` (0.1.1) - Shared utilities (toUint8Array, etc.)
 - `@character-foundry/tokenizers` (0.1.1) - Token counting
 
 **Format Packages:**
-- `@character-foundry/png` (0.0.4) - PNG tEXt chunk read/write
-- `@character-foundry/charx` (0.0.4) - CharX package parsing
-- `@character-foundry/voxta` (0.1.8) - Voxta package parsing
+- `@character-foundry/png` (0.0.5) - PNG tEXt chunk read/write
+- `@character-foundry/charx` (0.0.5) - CharX package parsing
+- `@character-foundry/voxta` (0.1.10) - Voxta package parsing
 
 **NEW Packages:**
 - `@character-foundry/lorebook` (0.0.2) - Lorebook parsing, extraction, and insertion utilities
@@ -623,3 +623,14 @@ npx wrangler d1 execute cardshub-db --remote --command "ALTER TABLE cards ADD CO
 **Cause:** GitHub push doesn't auto-deploy to Cloudflare
 **Fix:** `npm run cf:build && npm run cf:deploy`
 **Prevention:** CI only runs lint/tests, deployment is manual
+
+### 6. Browser crashes with `createRequire is not a function`
+**Symptom:** Upload page or any page using `@character-foundry/*` packages crashes with `(0, a.createRequire) is not a function`
+**Cause:** Upstream packages bundled fflate's Node.js code instead of keeping it external. The Node.js version uses `createRequire` from the `module` package which doesn't exist in browsers.
+**Fix:** Update packages to fixed versions:
+```bash
+GITHUB_TOKEN=xxx npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
+```
+**Verification:** `grep -l "createRequire" node_modules/@character-foundry/*/dist/*` should return nothing
+**Prevention:** Fixed in core@0.1.1, png@0.0.5, charx@0.0.5, voxta@0.1.10+ (fflate is now external)
+**Reference:** https://github.com/character-foundry/character-foundry/issues/18

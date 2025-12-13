@@ -4,12 +4,10 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout';
 import { Button, Badge } from '@/components/ui';
-import {
-  parseFromBufferWithAssets,
-  computeContentHash,
-  type ParsedCard,
-  type ParseResultWithAssets,
-} from '@/lib/client/card-parser';
+import type { ParseResultWithAssets } from '@/lib/client/card-parser';
+
+// Dynamic import to avoid SSR bundling issues with fflate
+const getCardParser = () => import('@/lib/client/card-parser');
 
 interface ParseState {
   status: 'idle' | 'parsing' | 'parsed' | 'error';
@@ -100,7 +98,8 @@ export default function UploadPage() {
       const arrayBuffer = await selectedFile.arrayBuffer();
       const buffer = new Uint8Array(arrayBuffer);
 
-      // Parse card entirely client-side
+      // Parse card entirely client-side (dynamic import to avoid SSR bundling issues)
+      const { parseFromBufferWithAssets } = await getCardParser();
       const result = parseFromBufferWithAssets(buffer, selectedFile.name);
 
       setParseState({ status: 'parsed', result });
@@ -141,7 +140,8 @@ export default function UploadPage() {
       const arrayBuffer = await file.arrayBuffer();
       const buffer = new Uint8Array(arrayBuffer);
 
-      // Compute content hash client-side
+      // Compute content hash client-side (dynamic import)
+      const { computeContentHash } = await getCardParser();
       const contentHash = await computeContentHash(buffer);
 
       const formData = new FormData();
