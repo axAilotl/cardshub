@@ -217,3 +217,6 @@ export async function getDatabase(): Promise<AsyncDb> {
   // Local development with better-sqlite3 (now async)
   return await getAsyncDb();
 }
+
+// Re-export Drizzle for convenience
+export { getDrizzle, type DrizzleDb } from './drizzle';
