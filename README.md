@@ -1,8 +1,11 @@
-# CardsHub
+# Character Federation
+
+![Gemini_Generated_Image_80fvtz80fvtz80fv](https://github.com/user-attachments/assets/662d9e5a-1c68-4a67-814b-53e6b27b3901)
 
 A platform for sharing, discovering, and managing AI character cards. Supports CCv2, CCv3, CharX, and Voxta formats.
 
-**Live:** https://hub.axailotl.ai
+
+**Live DEMO WIPED OFTEN:** https://hub.axailotl.ai
 
 ## Features
 
