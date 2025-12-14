@@ -291,6 +291,27 @@ The `lib/storage/` module provides:
 - Parallel batch uploads (20 concurrent) for fast processing
 - For PNGs with embedded icons: uses small iconx (~30-50KB) instead of full container (avoids CF 10MB limit)
 
+### Presigned Upload Flow (Optional)
+For large files, uploads can bypass Worker memory limits by uploading directly to R2:
+
+1. **Client requests presigned URLs** → `POST /api/uploads/presign`
+2. **Client uploads directly to R2** (parallel uploads for multiple files)
+3. **Client confirms upload** → `POST /api/uploads/confirm`
+4. **Server verifies files, moves to permanent location, creates card records**
+
+**Setup (optional - graceful fallback to FormData if not configured):**
+```bash
+# Create R2 API Token in Cloudflare Dashboard
+# Permission: Object Read & Write on cardshub-uploads bucket
+
+# Set secrets
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+```
+
+**R2 Lifecycle Rule (recommended):** Configure rule in dashboard to delete `uploads/pending/*` after 24h to clean orphaned uploads.
+
 ### Download Formats
 The `/api/cards/[slug]/download` endpoint supports three formats:
 - `png` - Card embedded in PNG image (default)
@@ -328,6 +349,8 @@ SQLite database (`cardshub.db`) with tables:
 |--------|----------|------|-------------|
 | GET | /api/cards | No | List cards (paginated, filtered by tags, sorted) |
 | POST | /api/cards | Yes | Upload new card (PNG/JSON/CharX/Voxta) |
+| POST | /api/uploads/presign | Yes | Get presigned URLs for direct R2 upload |
+| POST | /api/uploads/confirm | Yes | Confirm presigned upload and create card |
 | GET | /api/cards/[slug] | No | Get single card with head version |
 | DELETE | /api/cards/[slug] | Admin | Delete card |
 | GET | /api/cards/[slug]/download | No | Download card (format: png, json, original) |
@@ -576,6 +599,50 @@ The `schema.sql` file is NOT automatically applied to Cloudflare D1. When you ad
 - `CREATE TABLE IF NOT EXISTS` is safe to re-run
 - `ALTER TABLE ADD COLUMN` will fail if column already exists
 - SQLite doesn't support `DROP COLUMN` - need to recreate table
+
+## CSS Customization for Creators
+
+Users can customize their profile pages and card creators can style their character card pages.
+
+### Profile Page CSS
+- Users add custom CSS via **Settings > Profile > Custom Profile CSS** (max 10,000 chars)
+- CSS is injected via `<style>` tag on the profile page
+- Target elements using `data-*` attributes:
+  - `[data-profile]` - Main container
+  - `[data-profile-header]`, `[data-profile-avatar]`, `[data-profile-info]`
+  - `[data-profile-stats]`, `[data-stat="followers|cards|downloads|upvotes"]`
+  - `[data-profile-tabs]`, `[data-tab="cards|favorites"]`
+  - `[data-profile-content]`
+
+### Card Page CSS (Creator Notes)
+- Card creators embed `<style>` tags in Creator Notes
+- CSS is extracted and injected into the card detail page
+- Target elements using `data-*` attributes:
+  - `[data-card-page]`, `[data-card-slug="..."]`, `[data-card-format="png|charx|voxta"]`
+  - `[data-card-hero]`, `[data-card-image]`, `[data-card-info]`
+  - `[data-card-name]`, `[data-card-creator]`, `[data-card-description]`
+  - `[data-card-tags]`, `[data-card-stats]`, `[data-card-actions]`
+  - `[data-card-tokens]`, `[data-card-section="notes|character|greetings|..."]`
+
+### Available CSS Variables
+```css
+--deep-space: #0d0d1a;     /* Primary background */
+--cosmic-teal: #151528;    /* Secondary background */
+--starlight: #f0f0ff;      /* Primary text */
+--bi-pink: #d946ef;        /* Primary accent */
+--bi-purple: #8b5cf6;      /* Bridge purple */
+--bi-blue: #3b82f6;        /* Secondary accent */
+--nebula: var(--bi-pink);  /* Alias for primary accent */
+--aurora: var(--bi-blue);  /* Alias for secondary accent */
+--surface-1/2/3           /* Elevated surface colors */
+```
+
+### Security
+- Only CSS is allowed (no JavaScript execution)
+- External resources via `@import`/`url()` are blocked
+- Styles are scoped to the user's own profile or card page
+
+Full documentation: `docs/CSS_CUSTOMIZATION.md`
 
 ## Known Limitations
 

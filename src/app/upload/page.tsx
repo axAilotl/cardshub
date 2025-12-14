@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout';
 import { Button, Badge } from '@/components/ui';
 import type { ParseResultWithAssets } from '@/lib/client/card-parser';
 
-// Dynamic import to avoid SSR bundling issues with fflate
+// Dynamic imports to avoid SSR bundling issues
 const getCardParser = () => import('@/lib/client/card-parser');
+const getPresignedUpload = () => import('@/lib/client/presigned-upload');
 
 interface ParseState {
   status: 'idle' | 'parsing' | 'parsed' | 'error';
@@ -15,7 +16,7 @@ interface ParseState {
   error?: string;
 }
 
-type UploadStage = 'preparing' | 'uploading' | 'processing' | null;
+type UploadStage = 'preparing' | 'presigning' | 'uploading' | 'confirming' | 'processing' | null;
 type CardVisibility = 'public' | 'private' | 'unlisted';
 
 const VISIBILITY_OPTIONS: { value: CardVisibility; label: string; description: string }[] = [
@@ -35,6 +36,22 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [parseState, setParseState] = useState<ParseState>({ status: 'idle' });
   const [visibility, setVisibility] = useState<CardVisibility>('public');
+  const [usePresigned, setUsePresigned] = useState<boolean | null>(null);
+  const [currentUploadFile, setCurrentUploadFile] = useState<string | null>(null);
+
+  // Check if presigned uploads are available on mount
+  useEffect(() => {
+    const checkPresigned = async () => {
+      try {
+        const { checkPresignedAvailable } = await getPresignedUpload();
+        const available = await checkPresignedAvailable();
+        setUsePresigned(available);
+      } catch {
+        setUsePresigned(false);
+      }
+    };
+    checkPresigned();
+  }, []);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -135,6 +152,7 @@ export default function UploadPage() {
     setUploadProgress(0);
     setUploadStage('preparing');
     setError(null);
+    setCurrentUploadFile(null);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -144,6 +162,50 @@ export default function UploadPage() {
       const { computeContentHash } = await getCardParser();
       const contentHash = await computeContentHash(buffer);
 
+      // Use presigned URLs for single-character uploads when available
+      // Multi-char packages still use traditional upload (server needs to process them)
+      if (usePresigned && !parseState.result.isMultiCharPackage) {
+        const { uploadWithPresignedUrls } = await getPresignedUpload();
+
+        const result = await uploadWithPresignedUrls(
+          file,
+          parseState.result,
+          visibility,
+          contentHash,
+          (progress) => {
+            switch (progress.stage) {
+              case 'presigning':
+                setUploadStage('presigning');
+                setUploadProgress(progress.percent);
+                break;
+              case 'uploading':
+                setUploadStage('uploading');
+                setUploadProgress(progress.percent);
+                setCurrentUploadFile(progress.currentFile || null);
+                break;
+              case 'confirming':
+                setUploadStage('confirming');
+                setUploadProgress(progress.percent);
+                break;
+              case 'done':
+                setUploadStage('processing');
+                setUploadProgress(100);
+                break;
+              case 'error':
+                throw new Error(progress.error || 'Upload failed');
+            }
+          }
+        );
+
+        if (result.success && result.slug) {
+          router.push(`/card/${result.slug}`);
+        } else {
+          throw new Error(result.error || 'Upload failed');
+        }
+        return;
+      }
+
+      // Fallback to traditional FormData upload
       const formData = new FormData();
       formData.append('file', file);
 
@@ -484,7 +546,12 @@ export default function UploadPage() {
                   </svg>
                   <span className="text-starlight/80">
                     {uploadStage === 'preparing' && 'Preparing upload...'}
-                    {uploadStage === 'uploading' && `Uploading file... ${uploadProgress}%`}
+                    {uploadStage === 'presigning' && 'Getting upload URLs...'}
+                    {uploadStage === 'uploading' && (currentUploadFile
+                      ? `Uploading ${currentUploadFile}... ${uploadProgress}%`
+                      : `Uploading file... ${uploadProgress}%`
+                    )}
+                    {uploadStage === 'confirming' && 'Confirming upload...'}
                     {uploadStage === 'processing' && 'Processing card & assets...'}
                   </span>
                 </div>

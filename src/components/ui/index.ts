@@ -21,3 +21,4 @@ export {
   CollectionIcon,
 } from './icons';
 export { MetadataBadge } from './metadata-badge';
+export { Collapsible, Accordion } from './collapsible';

@@ -182,11 +182,11 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
   };
 
   return (
-    <div className="relative rounded-xl overflow-hidden mb-0">
-      <div className="absolute inset-0 bg-gradient-to-r from-deep-space via-deep-space/80 to-transparent z-10" />
+    <div className="relative rounded-xl overflow-hidden mb-0" data-card-hero>
+      <div className="absolute inset-0 bg-gradient-to-r from-deep-space via-deep-space/80 to-transparent z-10" data-card-hero-overlay />
 
       {(card.thumbnailPath || card.imagePath) && (
-        <div className="absolute inset-0">
+        <div className="absolute inset-0" data-card-hero-bg>
           <Image
             src={card.thumbnailPath || card.imagePath!}
             alt=""
@@ -196,10 +196,10 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
         </div>
       )}
 
-      <div className="relative z-20 flex flex-col md:flex-row gap-6 p-6">
+      <div className="relative z-20 flex flex-col md:flex-row gap-6 p-6" data-card-hero-content>
         {/* Card image */}
-        <div className="flex-shrink-0">
-          <div className="relative w-52 h-72 rounded-lg overflow-hidden border-2 border-nebula/30 shadow-xl group">
+        <div className="flex-shrink-0" data-card-image-container>
+          <div className="relative w-52 h-72 rounded-lg overflow-hidden border-2 border-nebula/30 shadow-xl group" data-card-image>
             {(card.thumbnailPath || card.imagePath) ? (
               <Image
                 src={card.thumbnailPath || card.imagePath!}
@@ -220,26 +220,27 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
         </div>
 
         {/* Card info */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col" data-card-info>
           <div className="flex-1">
-            <h1 className="text-3xl font-bold gradient-text mb-1">{card.name}</h1>
+            <h1 className="text-3xl font-bold gradient-text mb-1" data-card-name>{card.name}</h1>
 
             {card.creator && (
               <Link
                 href={`/explore?search=${encodeURIComponent(card.creator)}`}
                 className="text-sm text-starlight/60 hover:text-nebula mb-2 block"
+                data-card-creator
               >
                 by <span className="text-nebula">{card.creator}</span>
               </Link>
             )}
 
-            <p className="text-starlight/70 text-sm mb-3 line-clamp-2">
+            <p className="text-starlight/70 text-sm mb-3 line-clamp-2" data-card-description>
               {card.description || 'No description provided.'}
             </p>
 
             {/* Tags */}
             {card.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-4">
+              <div className="flex flex-wrap gap-1.5 mb-4" data-card-tags>
                 {card.tags.map((tag) => (
                   <Link
                     key={tag.id}
@@ -274,7 +275,7 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
             )}
 
             {/* Voting controls + Stats row */}
-            <div className="flex flex-wrap items-center gap-4 mb-4 p-3 rounded-lg bg-deep-space/50">
+            <div className="flex flex-wrap items-center gap-4 mb-4 p-3 rounded-lg bg-deep-space/50" data-card-stats>
               {/* Voting buttons - restructured with icons and counts */}
               <div className="flex items-center gap-3">
                 {/* Upvote button with count */}
@@ -387,7 +388,7 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
             </div>
 
             {/* Action buttons */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2" data-card-actions>
               <Button variant="primary" size="sm" onClick={() => onDownload(getDownloadFormat(card.sourceFormat))}>
                 <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -424,8 +425,8 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
         </div>
 
         {/* Token Breakdown - Right side box */}
-        <div className="flex-shrink-0 w-full md:w-56">
-          <div className="glass rounded-lg p-4 border border-nebula/20">
+        <div className="flex-shrink-0 w-full md:w-56" data-card-tokens-container>
+          <div className="glass rounded-lg p-4 border border-nebula/20" data-card-tokens>
             <h3 className="text-sm font-semibold text-starlight/80 mb-3 flex items-center gap-2">
               <CoinIcon className="w-4 h-4 text-solar" />
               Token Breakdown

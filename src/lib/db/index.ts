@@ -264,18 +264,16 @@ export async function transaction<T>(fn: (db: UnifiedDb) => T): Promise<T> {
   return (db as any).transaction(() => fn(db))();
 }
 
-// FTS functions (local only)
+// FTS functions (works on both local SQLite and Cloudflare D1)
 export async function rebuildFtsIndex(): Promise<void> {
-  if (isCloudflareRuntime()) return;
   const db = await getDb();
-  (db as any).transaction(() => {
-    (db as any).exec('DELETE FROM cards_fts');
-    (db as any).exec(`
-      INSERT INTO cards_fts(card_id, name, description, creator, creator_notes)
-      SELECT id, name, COALESCE(description, ''), COALESCE(creator, ''), COALESCE(creator_notes, '')
-      FROM cards
-    `);
-  })();
+  await db.prepare('DELETE FROM cards_fts').run();
+  await db.prepare(`
+    INSERT INTO cards_fts(card_id, name, description, creator, creator_notes)
+    SELECT id, name, COALESCE(description, ''), COALESCE(creator, ''), COALESCE(creator_notes, '')
+    FROM cards
+    WHERE visibility = 'public'
+  `).run();
 }
 
 export async function updateFtsIndex(
@@ -285,19 +283,17 @@ export async function updateFtsIndex(
   creator: string | null,
   creatorNotes: string | null
 ): Promise<void> {
-  if (isCloudflareRuntime()) return;
   const db = await getDb();
-  (db as any).transaction(() => {
-    db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
-    db.prepare(`
-      INSERT INTO cards_fts(card_id, name, description, creator, creator_notes)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(cardId, name, description || '', creator || '', creatorNotes || '');
-  })();
+  // Delete existing entry first
+  await db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
+  // Insert new entry
+  await db.prepare(`
+    INSERT INTO cards_fts(card_id, name, description, creator, creator_notes)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(cardId, name, description || '', creator || '', creatorNotes || '');
 }
 
 export async function removeFtsIndex(cardId: string): Promise<void> {
-  if (isCloudflareRuntime()) return;
   const db = await getDb();
-  db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
+  await db.prepare('DELETE FROM cards_fts WHERE card_id = ?').run(cardId);
 }

@@ -5,7 +5,7 @@
  * when running on Cloudflare Workers via OpenNext.
  */
 
-import type { D1Database, R2Bucket, Fetcher, IncomingRequestCfProperties, ExecutionContext } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket, KVNamespace, Fetcher, IncomingRequestCfProperties, ExecutionContext } from '@cloudflare/workers-types';
 
 // Cloudflare Images binding types
 export interface ImagesTransformOptions {
@@ -54,11 +54,16 @@ export interface ImagesBinding {
 export interface CloudflareEnv {
   DB: D1Database;
   R2: R2Bucket;
+  CACHE_KV: KVNamespace;
   ASSETS: Fetcher;
   IMAGES: ImagesBinding;
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
   NEXT_PUBLIC_APP_URL?: string;
+  // R2 presigned URL credentials
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
 }
 
 // Type for the Cloudflare context from getCloudflareContext()
@@ -105,6 +110,15 @@ export async function getR2(): Promise<R2Bucket | null> {
 }
 
 /**
+ * Get KV namespace for caching from Cloudflare context
+ * Must be called from an async context (API route, etc.)
+ */
+export async function getKV(): Promise<KVNamespace | null> {
+  const ctx = await getCloudflareContext();
+  return ctx?.env.CACHE_KV ?? null;
+}
+
+/**
  * Get Images binding from Cloudflare context
  * Used for image transformations (resize, format conversion, etc.)
  * Must be called from an async context (API route, etc.)
@@ -148,4 +162,39 @@ export async function getDiscordCredentials(): Promise<{ clientId: string; clien
 export async function getAppUrl(): Promise<string> {
   const ctx = await getCloudflareContext();
   return ctx?.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+}
+
+/**
+ * Get R2 credentials for presigned URLs
+ * These are separate from the R2 binding and use the S3-compatible API
+ */
+export async function getR2Credentials(): Promise<{
+  accessKeyId: string;
+  secretAccessKey: string;
+  accountId: string;
+} | null> {
+  // Check process.env first
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+
+  if (accessKeyId && secretAccessKey && accountId) {
+    return { accessKeyId, secretAccessKey, accountId };
+  }
+
+  // Try Cloudflare context as fallback
+  const ctx = await getCloudflareContext();
+  const cfAccessKeyId = ctx?.env.R2_ACCESS_KEY_ID;
+  const cfSecretAccessKey = ctx?.env.R2_SECRET_ACCESS_KEY;
+  const cfAccountId = ctx?.env.CLOUDFLARE_ACCOUNT_ID;
+
+  if (cfAccessKeyId && cfSecretAccessKey && cfAccountId) {
+    return {
+      accessKeyId: String(cfAccessKeyId),
+      secretAccessKey: String(cfSecretAccessKey),
+      accountId: String(cfAccountId),
+    };
+  }
+
+  return null;
 }

@@ -8,14 +8,12 @@ import {
   SectionTabs,
   UploaderInfo,
   NotesSection,
-  GeneralSection,
+  CharacterSection,
   GreetingsSection,
   LorebookSection,
   AssetsSection,
-  AdvancedSection,
   CommentsSection,
   type Section,
-  type CardExtensions,
 } from './components';
 import type { CharacterCardV3 } from '@/types/card';
 
@@ -67,13 +65,6 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
     };
   }, [customCss, card.id]);
 
-  // Check for extensions
-  const extensions = card.cardData.data.extensions as CardExtensions | undefined;
-  const hasAdvancedContent = extensions?.depth_prompt ||
-                             card.cardData.data.system_prompt ||
-                             card.cardData.data.post_history_instructions ||
-                             card.cardData.data.mes_example;
-
   // Check for assets (V3 cards or saved assets from packages)
   const v3Assets = card.cardData.spec === 'chara_card_v3'
     ? (card.cardData as CharacterCardV3).data.assets
@@ -84,11 +75,10 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
 
   const sections: { id: Section; label: string; available: boolean }[] = [
     { id: 'notes', label: "Creator's Notes", available: true },
-    { id: 'general', label: 'General', available: true },
+    { id: 'character', label: 'Character Card', available: true },
     { id: 'greetings', label: 'Greetings', available: card.hasAlternateGreetings || !!card.cardData.data.first_mes },
     { id: 'lorebook', label: 'Lorebook', available: card.hasLorebook },
     { id: 'assets', label: 'Assets', available: hasAssets },
-    { id: 'advanced', label: 'Advanced', available: !!hasAdvancedContent },
     { id: 'comments', label: 'Comments', available: true },
   ];
 
@@ -119,6 +109,7 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
 
   return (
     <AppShell>
+      <div data-card-page data-card-slug={card.slug} data-card-format={card.sourceFormat}>
       {/* Hero Section with Token Breakdown on right */}
       <CardHero
         card={card}
@@ -134,14 +125,14 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
       />
 
       {/* Content */}
-      <div className="w-full">
-        <div className="glass rounded-xl p-6">
+      <div className="w-full" data-card-content>
+        <div className="glass rounded-xl p-6" data-card-section={activeSection}>
           {activeSection === 'notes' && (
             <NotesSection creatorNotes={card.cardData.data.creator_notes || card.creatorNotes} isNsfw={isNsfw} />
           )}
 
-          {activeSection === 'general' && (
-            <GeneralSection cardData={card.cardData} tokens={card.tokens} />
+          {activeSection === 'character' && (
+            <CharacterSection cardData={card.cardData} tokens={card.tokens} />
           )}
 
           {activeSection === 'greetings' && (
@@ -161,10 +152,6 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
             <AssetsSection assets={v3Assets} savedAssets={card.savedAssets} />
           )}
 
-          {activeSection === 'advanced' && (
-            <AdvancedSection cardData={card.cardData} tokens={card.tokens} />
-          )}
-
           {activeSection === 'comments' && (
             <CommentsSection cardId={card.id} commentsCount={card.commentsCount} />
           )}
@@ -174,6 +161,7 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
         {card.uploader && (
           <UploaderInfo uploader={card.uploader} createdAt={card.createdAt} />
         )}
+      </div>
       </div>
     </AppShell>
   );

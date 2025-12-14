@@ -30,20 +30,20 @@ export function NotesSection({ creatorNotes, isNsfw }: NotesSectionProps) {
   const blurClasses = shouldBlur ? 'blur-md select-none' : '';
 
   return (
-    <div className="group">
-      <h2 className="text-xl font-semibold mb-4 gradient-text">Creator&apos;s Notes</h2>
+    <div className="group" data-section="notes">
+      <h2 className="text-xl font-semibold mb-4 gradient-text" data-section-title>Creator&apos;s Notes</h2>
       {creatorNotes ? (
         hasHtmlContent ? (
-          <HtmlContent html={processedNotes!} className={cn('text-starlight/80', blurClasses)} />
+          <HtmlContent html={processedNotes!} className={cn('text-starlight/80', blurClasses)} data-notes-content />
         ) : hasMarkdownImages ? (
-          <div className={cn('whitespace-pre-wrap text-starlight/80', blurClasses)}>
+          <div className={cn('whitespace-pre-wrap text-starlight/80', blurClasses)} data-notes-content>
             {renderTextWithImages(creatorNotes)}
           </div>
         ) : (
-          <p className={cn('whitespace-pre-wrap text-starlight/80', blurClasses)}>{creatorNotes}</p>
+          <p className={cn('whitespace-pre-wrap text-starlight/80', blurClasses)} data-notes-content>{creatorNotes}</p>
         )
       ) : (
-        <p className="text-starlight/50 italic">No creator notes provided.</p>
+        <p className="text-starlight/50 italic" data-notes-empty>No creator notes provided.</p>
       )}
     </div>
   );

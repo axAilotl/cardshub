@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge } from '@/components/ui';
+import { Badge, Collapsible, Accordion } from '@/components/ui';
 import { useSettings } from '@/lib/settings';
 import { cn } from '@/lib/utils/cn';
 import { renderTextWithImages } from '../utils';
@@ -18,46 +18,50 @@ export function GreetingsSection({ firstMessage, alternateGreetings, firstMessag
   const totalGreetings = 1 + (alternateGreetings?.length || 0);
 
   return (
-    <div>
-      <h2 className="text-xl font-semibold mb-4 gradient-text flex items-center gap-2">
+    <div data-section="greetings">
+      <h2 className="text-xl font-semibold mb-4 gradient-text flex items-center gap-2" data-section-title>
         Greetings
         <span className="text-sm font-normal text-starlight/50">
-          ({totalGreetings} total, {firstMessageTokens.toLocaleString()} tokens in default)
+          ({totalGreetings} total)
         </span>
       </h2>
-      <div className="space-y-4">
-        <div className={cn(
-          'bg-cosmic-teal/30 rounded-lg p-4 group',
-          shouldBlur && 'relative'
-        )}>
-          <div className="flex items-center gap-2 mb-2">
-            <Badge variant="success" size="sm">Default</Badge>
-          </div>
+
+      <Accordion>
+        {/* Default Greeting */}
+        <Collapsible
+          title="Default Greeting"
+          defaultOpen
+          badge={
+            <div className="flex items-center gap-2">
+              <Badge variant="success" size="sm">Default</Badge>
+              <span className="text-xs text-starlight/50">{firstMessageTokens.toLocaleString()} tokens</span>
+            </div>
+          }
+        >
           <div className={cn(
             'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
             shouldBlur && 'blur-md select-none'
           )}>
             {renderTextWithImages(firstMessage, { centered: true, halfSize: true })}
           </div>
-        </div>
+        </Collapsible>
 
+        {/* Alternate Greetings */}
         {alternateGreetings?.map((greeting, index) => (
-          <div key={index} className={cn(
-            'bg-cosmic-teal/30 rounded-lg p-4 group',
-            shouldBlur && 'relative'
-          )}>
-            <div className="flex items-center gap-2 mb-2">
-              <Badge variant="info" size="sm">Greeting {index + 2}</Badge>
-            </div>
+          <Collapsible
+            key={index}
+            title={`Greeting ${index + 2}`}
+            badge={<Badge variant="info" size="sm">Alt</Badge>}
+          >
             <div className={cn(
               'whitespace-pre-wrap text-sm text-starlight/70 transition-all duration-300',
               shouldBlur && 'blur-md select-none'
             )}>
               {renderTextWithImages(greeting, { centered: true, halfSize: true })}
             </div>
-          </div>
+          </Collapsible>
         ))}
-      </div>
+      </Accordion>
     </div>
   );
 }

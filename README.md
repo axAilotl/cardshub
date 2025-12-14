@@ -70,6 +70,11 @@ GITHUB_TOKEN=ghp_xxx           # Required for npm install (GitHub Packages auth)
 DISCORD_CLIENT_ID=xxx          # Discord OAuth
 DISCORD_CLIENT_SECRET=xxx
 
+# Optional - Presigned uploads (direct R2 upload, bypasses Worker memory)
+R2_ACCESS_KEY_ID=xxx           # R2 API token access key
+R2_SECRET_ACCESS_KEY=xxx       # R2 API token secret key
+CLOUDFLARE_ACCOUNT_ID=xxx      # Account ID for R2 S3 endpoint
+
 # Optional
 NEXT_PUBLIC_APP_URL=https://your-domain.com
 ```
@@ -98,6 +103,8 @@ See [CLAUDE.md](./CLAUDE.md) for full API documentation.
 
 - `GET /api/cards` - List cards with filtering
 - `POST /api/cards` - Upload card (auth required)
+- `POST /api/uploads/presign` - Get presigned URLs for direct R2 upload
+- `POST /api/uploads/confirm` - Confirm presigned upload
 - `GET /api/cards/[slug]/download?format=png|json|original` - Download card
 - `PUT /api/cards/[slug]/visibility` - Update card visibility (owner only)
 - `GET /api/search?q=query` - Full-text search

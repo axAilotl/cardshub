@@ -27,7 +27,7 @@ export function AppShell({ children }: AppShellProps) {
         'pt-16 transition-all duration-300 ease-in-out',
         settings.sidebarExpanded ? 'lg:pl-64' : 'lg:pl-16'
       )}>
-        <div className="p-4 sm:p-6 lg:p-8">
+        <div className="p-4 sm:p-6 lg:p-8" data-main-content>
           {children}
         </div>
       </main>

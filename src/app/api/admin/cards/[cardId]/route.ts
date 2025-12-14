@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { deleteCard } from '@/lib/db/cards';
+import { cacheDeleteByPrefix, CACHE_PREFIX } from '@/lib/cache/kv-cache';
 
 /**
  * DELETE /api/admin/cards/[cardId]
@@ -23,6 +24,10 @@ export async function DELETE(
     }
 
     await deleteCard(cardId);
+
+    // Invalidate all card caches
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARD);
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
 
     return NextResponse.json({ success: true });
   } catch (error) {

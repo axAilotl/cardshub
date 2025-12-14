@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCardBySlug, deleteCard } from '@/lib/db/cards';
 import { getSession } from '@/lib/auth';
+import { invalidateCardCache } from '@/lib/cache/kv-cache';
 
 interface RouteParams {
   params: Promise<{ slug: string }>;
@@ -116,6 +117,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     // Delete the card
     await deleteCard(card.id);
+
+    // Invalidate caches (card detail + all listings)
+    await invalidateCardCache(slug);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -28,6 +28,13 @@ database_id = "b81d49dc-a3e8-4be2-9fbe-835e4046deaf"
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "cardshub-uploads"
+# NOTE: Configure R2 lifecycle rule in dashboard to delete `uploads/pending/*` after 24h
+# This cleans up orphaned presigned uploads that were never confirmed
+
+# KV Cache binding
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "03473e806595491da3811b6820425aff"
 
 # Images binding for transformations
 [images]
@@ -40,7 +47,11 @@ binding = "IMAGES"
 [vars]
 NEXT_PUBLIC_APP_URL = "https://hub.axailotl.ai"
 DISCORD_CLIENT_ID = "1446350528568229890"
-# DISCORD_CLIENT_SECRET set via wrangler secret
+# Secrets set via wrangler secret:
+# DISCORD_CLIENT_SECRET
+# R2_ACCESS_KEY_ID - R2 API token access key for presigned URLs
+# R2_SECRET_ACCESS_KEY - R2 API token secret key for presigned URLs
+# CLOUDFLARE_ACCOUNT_ID - Account ID for R2 S3 endpoint
 
 # Development overrides
 [env.development.vars]

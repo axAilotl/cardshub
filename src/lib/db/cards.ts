@@ -3,30 +3,34 @@ import { getDatabase, type AsyncDb } from './async-db';
 import type { CardListItem, CardDetail, CardFilters, PaginatedResponse } from '@/types/card';
 import { createHash } from 'crypto';
 import { nanoid } from 'nanoid';
+import {
+  cacheGet,
+  cacheSet,
+  cardCacheKey,
+  cardListCacheKey,
+  invalidateCardCache,
+  CACHE_TTL,
+} from '@/lib/cache/kv-cache';
 
 // Get async database instance (handles both local and Cloudflare)
 const getDb = getDatabase;
 
-// FTS functions - only work locally, no-op on Cloudflare
+// FTS functions - work on both local SQLite and Cloudflare D1
 async function updateFtsIndexAsync(cardId: string, name: string, description: string | null, creator: string | null, creatorNotes: string | null): Promise<void> {
   try {
-    const { updateFtsIndex, isCloudflareRuntime } = await import('./index');
-    if (!isCloudflareRuntime()) {
-      await updateFtsIndex(cardId, name, description, creator, creatorNotes);
-    }
-  } catch {
-    // FTS not available
+    const { updateFtsIndex } = await import('./index');
+    await updateFtsIndex(cardId, name, description, creator, creatorNotes);
+  } catch (error) {
+    console.error('[FTS] Failed to update index:', error);
   }
 }
 
 async function removeFtsIndexAsync(cardId: string): Promise<void> {
   try {
-    const { removeFtsIndex, isCloudflareRuntime } = await import('./index');
-    if (!isCloudflareRuntime()) {
-      await removeFtsIndex(cardId);
-    }
-  } catch {
-    // FTS not available
+    const { removeFtsIndex } = await import('./index');
+    await removeFtsIndex(cardId);
+  } catch (error) {
+    console.error('[FTS] Failed to remove index:', error);
   }
 }
 
@@ -36,7 +40,6 @@ async function removeFtsIndexAsync(cardId: string): Promise<void> {
  * @param userId - Optional user ID to include isFavorited status for each card
  */
 export async function getCards(filters: CardFilters = {}, userId?: string): Promise<PaginatedResponse<CardListItem>> {
-  const db = await getDb();
   const {
     search,
     tags,
@@ -52,6 +55,20 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
     visibility = ['public'],
     includeNsfw = false,
   } = filters;
+
+  // Only cache anonymous requests (userId = undefined)
+  // Authenticated requests include user-specific isFavorited data
+  const shouldCache = !userId;
+  const cacheKey = shouldCache ? cardListCacheKey({ ...filters, page, limit }) : '';
+
+  if (shouldCache) {
+    const cached = await cacheGet<PaginatedResponse<CardListItem>>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const db = await getDb();
 
   const offset = (page - 1) * limit;
   const params: (string | number)[] = [];
@@ -228,13 +245,27 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
     collectionName: row.collection_name,
   }));
 
-  return { items, total, page, limit, hasMore: offset + items.length < total };
+  const result = { items, total, page, limit, hasMore: offset + items.length < total };
+
+  // Cache anonymous results (authenticated requests have user-specific isFavorited)
+  if (shouldCache) {
+    await cacheSet(cacheKey, result, { ttl: CACHE_TTL.CARD_LISTING });
+  }
+
+  return result;
 }
 
 /**
  * Get a single card by slug
  */
 export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
+  // Check cache first
+  const cacheKey = cardCacheKey(slug);
+  const cached = await cacheGet<CardDetail>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const db = await getDb();
 
   const query = `
@@ -276,7 +307,7 @@ export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
     }
   }
 
-  return {
+  const cardDetail: CardDetail = {
     id: row.id, slug: row.slug, name: row.name, description: row.description,
     creator: row.creator, creatorNotes: row.creator_notes,
     specVersion: row.spec_version, sourceFormat: (row.source_format || 'png') as CardDetail['sourceFormat'],
@@ -305,6 +336,11 @@ export async function getCardBySlug(slug: string): Promise<CardDetail | null> {
     collectionSlug: row.collection_slug,
     collectionName: row.collection_name,
   };
+
+  // Cache for 24 hours (cards are mostly static)
+  await cacheSet(cacheKey, cardDetail, { ttl: CACHE_TTL.CARD_DETAIL });
+
+  return cardDetail;
 }
 
 /**

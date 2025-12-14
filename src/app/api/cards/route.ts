@@ -10,6 +10,7 @@ import { generateId, generateSlug } from '@/lib/utils';
 import { store, getPublicUrl } from '@/lib/storage';
 import { getSession } from '@/lib/auth';
 import { isCloudflareRuntime } from '@/lib/db';
+import { cacheDeleteByPrefix, CACHE_PREFIX } from '@/lib/cache/kv-cache';
 import {
   parseQuery,
   CardFiltersSchema,
@@ -483,6 +484,9 @@ export async function POST(request: NextRequest) {
             tagSlugs
           );
 
+          // Invalidate listing caches so new cards appear in results
+          await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
+
           return NextResponse.json({
             success: true,
             type: 'collection',
@@ -886,6 +890,9 @@ export async function POST(request: NextRequest) {
         cardData: cardDataJson,
       },
     });
+
+    // Invalidate listing caches so new card appears in results
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
 
     return NextResponse.json({
       success: true,

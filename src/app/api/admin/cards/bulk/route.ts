@@ -3,6 +3,7 @@ import { getDatabase } from '@/lib/db/async-db';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
 import { parseBody, VisibilitySchema, ModerationStateSchema, NanoIdSchema } from '@/lib/validations';
+import { cacheDeleteByPrefix, CACHE_PREFIX } from '@/lib/cache/kv-cache';
 
 // Bulk update schema
 const BulkUpdateSchema = z.object({
@@ -57,6 +58,10 @@ export async function PUT(request: NextRequest) {
         WHERE id IN (${placeholders})
       `).run(moderationState, ...cardIds);
     }
+
+    // Invalidate all card caches
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARD);
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
 
     return NextResponse.json({
       success: true,
@@ -119,6 +124,10 @@ export async function DELETE(request: NextRequest) {
 
     // Finally delete the cards
     await db.prepare(`DELETE FROM cards WHERE id IN (${placeholders})`).run(...cardIds);
+
+    // Invalidate all card caches
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARD);
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getCardBySlug, updateCardVisibility } from '@/lib/db/cards';
+import { invalidateCardCache } from '@/lib/cache/kv-cache';
 import { z } from 'zod';
 
 const OwnerVisibilitySchema = z.object({
@@ -59,6 +60,9 @@ export async function PUT(
     const { visibility } = parsed.data;
 
     await updateCardVisibility(card.id, visibility);
+
+    // Invalidate caches (card detail + all listings)
+    await invalidateCardCache(slug);
 
     return NextResponse.json({ success: true, visibility });
   } catch (error) {

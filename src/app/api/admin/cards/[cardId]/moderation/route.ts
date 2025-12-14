@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { updateModerationState } from '@/lib/db/cards';
 import { parseBody, UpdateModerationSchema } from '@/lib/validations';
+import { cacheDeleteByPrefix, CACHE_PREFIX } from '@/lib/cache/kv-cache';
 
 /**
  * PUT /api/admin/cards/[cardId]/moderation
@@ -29,6 +30,10 @@ export async function PUT(
     const { state } = parsed.data;
 
     await updateModerationState(cardId, state);
+
+    // Invalidate all card caches
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARD);
+    await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);
 
     return NextResponse.json({ success: true });
   } catch (error) {
