@@ -63,10 +63,21 @@ async function handleVoxtaCollectionUpload(
   visibility: 'public' | 'private' | 'nsfw_only' | 'unlisted',
   tagSlugs: string[]
 ): Promise<{ collectionId: string; collectionSlug: string; cardCount: number }> {
-  const pkg = voxtaData.package!;
+  // Create synthetic package if none exists (for character-only exports)
+  const pkg = voxtaData.package || {
+    $type: 'package' as const,
+    Id: generateId(),
+    Name: voxtaData.characters[0]?.data?.Name
+      ? `${voxtaData.characters[0].data.Name} & Friends`
+      : `${voxtaData.characters.length} Characters`,
+    Version: '1.0.0',
+    Description: `Collection of ${voxtaData.characters.length} characters`,
+    Creator: voxtaData.characters[0]?.data?.Creator,
+    ExplicitContent: voxtaData.characters.some(c => c.data?.ExplicitContent),
+  };
 
   // Check if this package already exists (for upgrade detection)
-  if (pkg.Id) {
+  if (voxtaData.package?.Id) {
     const existing = await getCollectionByPackageId(pkg.Id);
     if (existing) {
       // Check date_modified for upgrade
@@ -475,7 +486,8 @@ export async function POST(request: NextRequest) {
         console.log('[Upload] Voxta parsed successfully, characters:', voxtaData.characters.length);
 
         // If 2+ characters, create a collection
-        if (voxtaData.characters.length >= 2 && voxtaData.package) {
+        // Note: Some Voxta exports don't have package.json (exportType: 'character')
+        if (voxtaData.characters.length >= 2) {
           const result = await handleVoxtaCollectionUpload(
             voxtaData,
             buffer,
@@ -585,9 +597,22 @@ export async function POST(request: NextRequest) {
         raw: ccv3,
       };
 
-      // Get thumbnail from Voxta character
-      if (extractedChar.thumbnail) {
-        mainImage = Buffer.from(extractedChar.thumbnail as Uint8Array);
+      // Get thumbnail from ThumbnailResource if specified, otherwise use character's thumbnail
+      // ThumbnailResource.Kind: 3 = Character, 2 = Scenario
+      const pkg = voxtaData.package;
+      let thumbnailSource = extractedChar; // Default to the character being uploaded
+
+      if (pkg?.ThumbnailResource?.Id) {
+        // Look up the character specified by ThumbnailResource
+        const thumbResourceChar = voxtaData.characters.find(c => c.id === pkg.ThumbnailResource!.Id);
+        if (thumbResourceChar?.thumbnail) {
+          thumbnailSource = thumbResourceChar;
+          console.log(`[Upload] Using ThumbnailResource character ${pkg.ThumbnailResource.Id} for thumbnail`);
+        }
+      }
+
+      if (thumbnailSource.thumbnail) {
+        mainImage = Buffer.from(thumbnailSource.thumbnail as Uint8Array);
       }
 
       // Extract assets from Voxta character
@@ -653,8 +678,20 @@ export async function POST(request: NextRequest) {
               raw: ccv3,
             };
 
-            if (extractedChar.thumbnail) {
-              mainImage = Buffer.from(extractedChar.thumbnail as Uint8Array);
+            // Get thumbnail from ThumbnailResource if specified
+            const fallbackPkg = voxtaData.package;
+            let fallbackThumbSource = extractedChar;
+
+            if (fallbackPkg?.ThumbnailResource?.Id) {
+              const thumbResourceChar = voxtaData.characters.find(c => c.id === fallbackPkg.ThumbnailResource!.Id);
+              if (thumbResourceChar?.thumbnail) {
+                fallbackThumbSource = thumbResourceChar;
+                console.log(`[Upload] Using ThumbnailResource character ${fallbackPkg.ThumbnailResource.Id} for thumbnail (fallback)`);
+              }
+            }
+
+            if (fallbackThumbSource.thumbnail) {
+              mainImage = Buffer.from(fallbackThumbSource.thumbnail as Uint8Array);
             }
 
             // Extract assets from Voxta character

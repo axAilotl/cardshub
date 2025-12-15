@@ -42,15 +42,17 @@ interface FileDescriptor {
 export async function checkPresignedAvailable(): Promise<boolean> {
   try {
     // Make a test request to see if the endpoint is configured
+    // Use application/octet-stream as it's in the allowed content types
     const response = await fetch('/api/uploads/presign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId: crypto.randomUUID(),
-        files: [{ key: 'test', filename: 'test.txt', size: 1, contentType: 'text/plain' }],
+        files: [{ key: 'test', filename: 'test.bin', size: 1, contentType: 'application/octet-stream' }],
       }),
     });
-    // 503 means not configured, 401 means it exists but needs auth
+    // 503 means not configured, 401 means it exists but needs auth, 400 means validation failed
+    // Any other status means the endpoint exists and is configured
     return response.status !== 503;
   } catch {
     return false;
@@ -186,6 +188,7 @@ export async function uploadWithPresignedUrls(
           name: asset.name,
           type: asset.type,
           ext: asset.ext,
+          originalPath: asset.path || '',  // Original path inside package (e.g., "assets/icon/main.png")
         })).filter(a => a.r2Key) || [],
       },
       visibility,

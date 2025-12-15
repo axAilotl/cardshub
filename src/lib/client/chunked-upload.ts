@@ -45,6 +45,11 @@ export async function uploadChunked(
 
     // Prepare metadata for pending card creation
     const { card, mainImage } = parseResult;
+
+    // Count assets from manifest (CharX/Voxta packages)
+    const assetsCount = parseResult.extractedAssets?.length || 0;
+    const hasAssets = assetsCount > 0;
+
     const metadata = {
       name: card.name,
       description: card.description || '',
@@ -53,7 +58,11 @@ export async function uploadChunked(
       specVersion: card.specVersion,
       sourceFormat: card.sourceFormat,
       tokens: card.tokens,
-      metadata: card.metadata,
+      metadata: {
+        ...card.metadata,
+        hasAssets,
+        assetsCount,
+      },
       tags: card.tags,
       contentHash,
       cardData: JSON.stringify(card.raw),

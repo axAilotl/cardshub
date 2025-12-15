@@ -136,19 +136,38 @@ export function parseFromBufferWithAssets(buffer: Uint8Array, filename?: string)
   if (isVoxta(uint8)) {
     try {
       const voxtaData = readVoxta(uint8, { maxFileSize: 50 * 1024 * 1024 });
-      if (voxtaData.characters.length >= 2 && voxtaData.package) {
+      // Multi-character packages should create collections
+      // Note: Some Voxta exports don't have package.json (exportType: 'character')
+      if (voxtaData.characters.length >= 2) {
         // Multi-char package - return minimal info, let server handle it
         // We still parse the first char for preview purposes
         const result = parseCard(uint8, { extractAssets: true });
         const card = toParsedCard(result);
 
-        // Get main image from first character
+        // Get main image from ThumbnailResource if specified, otherwise first character
+        // ThumbnailResource.Kind: 3 = Character
         let mainImage: Uint8Array | undefined;
-        const mainAsset = result.assets.find(a => a.isMain && a.type === 'icon');
-        if (mainAsset?.data) {
-          mainImage = mainAsset.data instanceof Uint8Array
-            ? mainAsset.data
-            : new Uint8Array(mainAsset.data as ArrayBuffer);
+        const pkg = voxtaData.package;
+
+        if (pkg?.ThumbnailResource?.Id) {
+          // Look up the character specified by ThumbnailResource
+          const thumbChar = voxtaData.characters.find(c => c.id === pkg.ThumbnailResource!.Id);
+          if (thumbChar?.thumbnail) {
+            mainImage = thumbChar.thumbnail instanceof Uint8Array
+              ? thumbChar.thumbnail
+              : new Uint8Array(thumbChar.thumbnail as ArrayBuffer);
+            console.log(`[card-parser] Using ThumbnailResource character ${pkg.ThumbnailResource.Id} for preview`);
+          }
+        }
+
+        // Fallback to main icon from parseCard result
+        if (!mainImage) {
+          const mainAsset = result.assets.find(a => a.isMain && a.type === 'icon');
+          if (mainAsset?.data) {
+            mainImage = mainAsset.data instanceof Uint8Array
+              ? mainAsset.data
+              : new Uint8Array(mainAsset.data as ArrayBuffer);
+          }
         }
 
         return {
@@ -157,11 +176,12 @@ export function parseFromBufferWithAssets(buffer: Uint8Array, filename?: string)
           mainImage,
           isMultiCharPackage: true,
           packageCharCount: voxtaData.characters.length,
-          packageName: voxtaData.package.Name,
+          packageName: voxtaData.package?.Name || `${voxtaData.characters.length} Characters`,
         };
       }
-    } catch {
-      // Fall through to normal parsing
+    } catch (error) {
+      // Log error for debugging, then fall through to normal parsing
+      console.error('[card-parser] Multi-char Voxta detection failed:', error);
     }
   }
 

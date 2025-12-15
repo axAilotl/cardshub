@@ -4,6 +4,11 @@
  * Complete a multipart upload to R2.
  * Called after all parts have been uploaded via /api/uploads/part.
  *
+ * For CharX/Voxta packages, this also:
+ * - Extracts assets from the package
+ * - Saves assets to R2
+ * - Rewrites internal URLs in card_data
+ *
  * Request body (JSON):
  * - uploadId: R2 multipart upload ID
  * - key: R2 object key
@@ -21,7 +26,9 @@ import { z } from 'zod';
 import { getR2 } from '@/lib/cloudflare/env';
 import { getDatabase } from '@/lib/db/async-db';
 import { isCloudflareRuntime } from '@/lib/db';
-import { getPublicUrl } from '@/lib/storage';
+import { getPublicUrl, store } from '@/lib/storage';
+import { parseCard } from '@character-foundry/loader';
+import { toUint8Array } from '@character-foundry/core';
 
 const CompleteUploadSchema = z.object({
   uploadId: z.string().min(1),
@@ -123,6 +130,70 @@ export async function POST(request: NextRequest) {
       ? `r2://${key}`
       : `file:///${key}`;
 
+    // Check if this is a CharX or Voxta package that needs asset extraction
+    const isPackage = key.endsWith('.charx') || key.endsWith('.voxpkg');
+    const savedAssetsData: Array<{ name: string; type: string; ext: string; path: string; thumbnailPath?: string }> = [];
+    let processedCardData: string | null = null;
+
+    if (isPackage) {
+      console.log(`[CompleteUpload] Processing package ${key} for asset extraction`);
+      try {
+        // Get the uploaded file to extract assets
+        const uploadedObject = await r2.get(key);
+        if (uploadedObject) {
+          const buffer = await uploadedObject.arrayBuffer();
+          const uint8Buffer = toUint8Array(new Uint8Array(buffer));
+
+          // Parse the package to extract assets
+          const parseResult = parseCard(uint8Buffer, { extractAssets: true });
+
+          // Build URL mapping and save non-main assets
+          const assetUrlMapping = new Map<string, string>();
+          const nonMainAssets = parseResult.assets.filter(a => !a.isMain || a.type !== 'icon');
+
+          for (const asset of nonMainAssets) {
+            const assetBuffer = Buffer.from(asset.data as Uint8Array);
+            const assetKey = `uploads/assets/${card.id}/${asset.name}.${asset.ext}`;
+
+            // Save asset to R2
+            await store(assetBuffer, assetKey);
+
+            const savedPath = `/api/uploads/${assetKey}`;
+            savedAssetsData.push({
+              name: asset.name,
+              type: asset.type,
+              ext: asset.ext,
+              path: savedPath,
+            });
+
+            // Build URL mapping from internal paths to saved paths
+            if (asset.path) {
+              assetUrlMapping.set(`embeded://${asset.path}`, savedPath);
+              assetUrlMapping.set(`ccdefault://${asset.path}`, savedPath);
+              assetUrlMapping.set(asset.path, savedPath);
+            }
+          }
+
+          // Get the current card_data and rewrite URLs
+          const version = await db.prepare(`
+            SELECT card_data FROM card_versions WHERE id = ?
+          `).get(card.head_version_id) as { card_data: string } | undefined;
+
+          if (version?.card_data && assetUrlMapping.size > 0) {
+            processedCardData = version.card_data;
+            for (const [originalUrl, newUrl] of assetUrlMapping) {
+              const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              processedCardData = processedCardData.replace(new RegExp(escaped, 'g'), newUrl);
+            }
+            console.log(`[CompleteUpload] Rewrote ${assetUrlMapping.size} asset URLs, extracted ${savedAssetsData.length} assets`);
+          }
+        }
+      } catch (extractError) {
+        console.error('[CompleteUpload] Asset extraction failed:', extractError);
+        // Continue without assets - card still usable
+      }
+    }
+
     // Update card and version records
     const now = Math.floor(Date.now() / 1000);
 
@@ -135,12 +206,31 @@ export async function POST(request: NextRequest) {
       WHERE id = ?
     `).run(now, card.id);
 
-    // Update version with storage URL
-    await db.prepare(`
-      UPDATE card_versions
-      SET storage_url = ?
-      WHERE id = ?
-    `).run(storageUrl, card.head_version_id);
+    // Update version with storage URL and processed data
+    if (processedCardData || savedAssetsData.length > 0) {
+      await db.prepare(`
+        UPDATE card_versions
+        SET storage_url = ?,
+            has_assets = ?,
+            assets_count = ?,
+            saved_assets = ?,
+            card_data = COALESCE(?, card_data)
+        WHERE id = ?
+      `).run(
+        storageUrl,
+        savedAssetsData.length > 0 ? 1 : 0,
+        savedAssetsData.length,
+        savedAssetsData.length > 0 ? JSON.stringify(savedAssetsData) : null,
+        processedCardData,
+        card.head_version_id
+      );
+    } else {
+      await db.prepare(`
+        UPDATE card_versions
+        SET storage_url = ?
+        WHERE id = ?
+      `).run(storageUrl, card.head_version_id);
+    }
 
     return NextResponse.json({
       success: true,
@@ -148,6 +238,7 @@ export async function POST(request: NextRequest) {
       slug: card.slug,
       storageUrl: getPublicUrl(storageUrl),
       size: object.size,
+      assetsExtracted: savedAssetsData.length,
     });
   } catch (error) {
     console.error('Error completing upload:', error);

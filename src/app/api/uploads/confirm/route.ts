@@ -78,15 +78,32 @@ const CardMetadataSchema = z.object({
   cardData: z.string().min(1), // JSON stringified
 });
 
+// Secure r2Key schema - prevents path traversal and ensures keys are in pending directory
+const R2KeySchema = z.string()
+  .min(1)
+  .refine(
+    (key) => key.startsWith('uploads/pending/'),
+    'r2Key must start with uploads/pending/'
+  )
+  .refine(
+    (key) => !key.includes('..'),
+    'r2Key cannot contain path traversal'
+  )
+  .refine(
+    (key) => !key.includes('//'),
+    'r2Key cannot contain double slashes'
+  );
+
 // Files schema
 const FilesSchema = z.object({
-  original: z.object({ r2Key: z.string().min(1) }),
-  icon: z.object({ r2Key: z.string().min(1) }).optional(),
+  original: z.object({ r2Key: R2KeySchema }),
+  icon: z.object({ r2Key: R2KeySchema }).optional(),
   assets: z.array(z.object({
-    r2Key: z.string().min(1),
+    r2Key: R2KeySchema,
     name: z.string().min(1),
     type: z.string().min(1),
     ext: z.string().min(1),
+    originalPath: z.string().optional(),  // Original path inside package (e.g., "assets/icon/main.png")
   })).optional().default([]),
 });
 
@@ -197,8 +214,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Process assets
+    // Process assets and build URL mapping for internal references
     const savedAssetsData: Array<{ name: string; type: string; ext: string; path: string; thumbnailPath?: string }> = [];
+    const assetUrlMapping = new Map<string, string>();
+
     if (files.assets && files.assets.length > 0) {
       for (const asset of files.assets) {
         const assetObject = await r2.get(asset.r2Key);
@@ -211,14 +230,36 @@ export async function POST(request: NextRequest) {
           await r2.put(permanentAssetKey, assetData);
           await r2.delete(asset.r2Key);
 
+          const savedPath = `/api/uploads/uploads/assets/${cardId}/${asset.name}.${asset.ext}`;
           savedAssetsData.push({
             name: asset.name,
             type: asset.type,
             ext: asset.ext,
-            path: `/api/uploads/uploads/assets/${cardId}/${asset.name}.${asset.ext}`,
+            path: savedPath,
           });
+
+          // Build URL mapping from internal paths to saved paths
+          // CharX uses paths like "embeded://assets/icon/main.png" or "ccdefault://assets/..."
+          if (asset.originalPath) {
+            // Map various internal URL schemes to the saved path
+            assetUrlMapping.set(`embeded://${asset.originalPath}`, savedPath);
+            assetUrlMapping.set(`ccdefault://${asset.originalPath}`, savedPath);
+            // Also map relative paths
+            assetUrlMapping.set(asset.originalPath, savedPath);
+          }
         }
       }
+    }
+
+    // Rewrite internal asset URLs in cardData
+    let processedCardData = metadata.cardData;
+    if (assetUrlMapping.size > 0) {
+      for (const [originalUrl, newUrl] of assetUrlMapping) {
+        // Escape special regex characters in the URL
+        const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        processedCardData = processedCardData.replace(new RegExp(escaped, 'g'), newUrl);
+      }
+      console.log(`[ConfirmUpload] Rewrote ${assetUrlMapping.size} asset URLs in cardData`);
     }
 
     // Validate tags
@@ -276,7 +317,7 @@ export async function POST(request: NextRequest) {
         thumbnailPath,
         thumbnailWidth,
         thumbnailHeight,
-        cardData: metadata.cardData,
+        cardData: processedCardData,
       },
     });
 

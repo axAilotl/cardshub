@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
 import { parseQuery, SearchQuerySchema } from '@/lib/validations';
 
-interface SearchResult {
+interface CardSearchResult {
   id: string;
+  type: 'card';
   slug: string;
   name: string;
   description: string | null;
@@ -16,6 +17,21 @@ interface SearchResult {
   rank: number;
   snippet: string | null;
 }
+
+interface CollectionSearchResult {
+  id: string;
+  type: 'collection';
+  slug: string;
+  name: string;
+  description: string | null;
+  creator: string | null;
+  thumbnailPath: string | null;
+  itemsCount: number;
+  downloadsCount: number;
+  rank: number;
+}
+
+type SearchResult = CardSearchResult | CollectionSearchResult;
 
 /**
  * GET /api/search
@@ -56,24 +72,45 @@ export async function GET(request: NextRequest) {
     }
 
     // Visibility filter
-    const visibilityCondition = includeNsfw
+    const cardVisibilityCondition = includeNsfw
       ? `c.visibility IN ('public', 'nsfw_only')`
       : `c.visibility = 'public'`;
 
-    // Count total results
-    const countQuery = `
+    const collectionVisibilityCondition = includeNsfw
+      ? `col.visibility IN ('public', 'nsfw_only')`
+      : `col.visibility = 'public'`;
+
+    // For LIKE search on collections (FTS not available for collections)
+    const likePattern = `%${searchTerm}%`;
+
+    // Count total card results
+    const cardCountQuery = `
       SELECT COUNT(*) as total
       FROM cards c
       INNER JOIN cards_fts fts ON c.id = fts.card_id
       WHERE cards_fts MATCH ?
-        AND ${visibilityCondition}
+        AND ${cardVisibilityCondition}
         AND c.moderation_state != 'blocked'
     `;
-    const totalResult = await db.prepare(countQuery).get<{ total: number }>(ftsQuery);
+    const cardTotalResult = await db.prepare(cardCountQuery).get<{ total: number }>(ftsQuery);
+    const cardTotal = cardTotalResult?.total || 0;
 
-    // Get ranked results with BM25 scoring and snippets
+    // Count total collection results
+    const collectionCountQuery = `
+      SELECT COUNT(*) as total
+      FROM collections col
+      WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
+        AND ${collectionVisibilityCondition}
+    `;
+    const collectionTotalResult = await db.prepare(collectionCountQuery).get<{ total: number }>(
+      likePattern, likePattern, likePattern
+    );
+    const collectionTotal = collectionTotalResult?.total || 0;
+    const total = cardTotal + collectionTotal;
+
+    // Get ranked card results with BM25 scoring and snippets
     // Note: bm25() column indices: 0=card_id (unindexed), 1=name, 2=description, 3=creator, 4=creator_notes
-    const searchQuery = `
+    const cardSearchQuery = `
       SELECT
         c.id,
         c.slug,
@@ -91,13 +128,13 @@ export async function GET(request: NextRequest) {
       INNER JOIN cards_fts fts ON c.id = fts.card_id
       LEFT JOIN card_versions v ON c.head_version_id = v.id
       WHERE cards_fts MATCH ?
-        AND ${visibilityCondition}
+        AND ${cardVisibilityCondition}
         AND c.moderation_state != 'blocked'
       ORDER BY rank
       LIMIT ? OFFSET ?
     `;
 
-    const rows = await db.prepare(searchQuery).all<{
+    const cardRows = await db.prepare(cardSearchQuery).all<{
       id: string;
       slug: string;
       name: string;
@@ -112,26 +149,80 @@ export async function GET(request: NextRequest) {
       snippet: string | null;
     }>(ftsQuery, limit, offset);
 
-    const items: SearchResult[] = rows.map(row => ({
-      id: row.id,
-      slug: row.slug,
-      name: row.name,
-      description: row.description,
-      creator: row.creator,
-      thumbnailPath: row.thumbnail_path,
-      tokensTotal: row.tokens_total,
-      upvotes: row.upvotes,
-      downvotes: row.downvotes,
-      downloadsCount: row.downloads_count,
-      rank: row.rank,
-      snippet: row.snippet,
-    }));
+    // Get collection results (simple LIKE search - no FTS for collections)
+    // Only fetch if we have room in the limit
+    const collectionLimit = Math.max(0, limit - cardRows.length);
+    let collectionRows: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string | null;
+      creator: string | null;
+      thumbnail_path: string | null;
+      items_count: number;
+      downloads_count: number;
+    }> = [];
+
+    if (collectionLimit > 0) {
+      const collectionSearchQuery = `
+        SELECT
+          col.id,
+          col.slug,
+          col.name,
+          col.description,
+          col.creator,
+          col.thumbnail_path,
+          col.items_count,
+          col.downloads_count
+        FROM collections col
+        WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
+          AND ${collectionVisibilityCondition}
+        ORDER BY col.downloads_count DESC
+        LIMIT ?
+      `;
+      collectionRows = await db.prepare(collectionSearchQuery).all(
+        likePattern, likePattern, likePattern, collectionLimit
+      );
+    }
+
+    // Combine results - cards first (ranked by FTS), then collections
+    const items: SearchResult[] = [
+      ...cardRows.map(row => ({
+        id: row.id,
+        type: 'card' as const,
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        creator: row.creator,
+        thumbnailPath: row.thumbnail_path,
+        tokensTotal: row.tokens_total,
+        upvotes: row.upvotes,
+        downvotes: row.downvotes,
+        downloadsCount: row.downloads_count,
+        rank: row.rank,
+        snippet: row.snippet,
+      })),
+      ...collectionRows.map(row => ({
+        id: row.id,
+        type: 'collection' as const,
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        creator: row.creator,
+        thumbnailPath: row.thumbnail_path,
+        itemsCount: row.items_count,
+        downloadsCount: row.downloads_count,
+        rank: 999, // Collections don't have FTS rank, put at end
+      })),
+    ];
 
     return NextResponse.json({
       items,
-      total: totalResult?.total || 0,
+      total,
+      cardCount: cardTotal,
+      collectionCount: collectionTotal,
       query: query,
-      hasMore: offset + items.length < (totalResult?.total || 0),
+      hasMore: offset + items.length < total,
     }, {
       headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
     });
