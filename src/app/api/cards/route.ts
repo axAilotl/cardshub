@@ -713,7 +713,15 @@ export async function POST(request: NextRequest) {
 
       // Only process parseResult if we didn't handle Voxta above
       if (parseResult) {
-        const cardData = parseResult.card.data;
+        // WORKAROUND: loader 0.1.9 has a bug where V2-to-V3 normalization can produce
+        // empty card.data while originalShape.data has the correct values. Fall back
+        // to originalShape when normalized data is missing the name field.
+        let cardData = parseResult.card.data;
+        const originalData = (parseResult.originalShape as { data?: typeof cardData })?.data;
+        if (!cardData.name && originalData?.name) {
+          console.log('[Upload] WORKAROUND: Using originalShape.data due to empty normalized data');
+          cardData = originalData;
+        }
 
         // Find main image from assets
         // loader 0.1.1+ provides isMain icon with tEXt chunks stripped (clean PNG for thumbnails)

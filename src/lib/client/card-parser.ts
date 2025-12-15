@@ -68,7 +68,16 @@ import { extractCardMetadata } from '@/lib/card-metadata';
  */
 function toParsedCard(result: ParseResult): ParsedCard {
   const card = result.card;
-  const data = card.data;
+
+  // WORKAROUND: loader 0.1.9 has a bug where V2-to-V3 normalization can produce
+  // empty card.data while originalShape.data has the correct values. Fall back
+  // to originalShape when normalized data is missing the name field.
+  let data = card.data;
+  const originalData = (result.originalShape as { data?: typeof data })?.data;
+  if (!data.name && originalData?.name) {
+    console.log('[card-parser] WORKAROUND: Using originalShape.data due to empty normalized data');
+    data = originalData;
+  }
 
   // Calculate token counts
   const tokens = countCardTokens(data);
