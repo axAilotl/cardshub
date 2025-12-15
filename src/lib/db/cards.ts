@@ -579,30 +579,50 @@ export async function createCard(input: CreateCardInput): Promise<{ cardId: stri
   // Execute the main batch
   await db.batch(statements);
 
-  // Link tags - This logic is complex (Find-or-Create) and cannot be easily batched with the INSERTs above 
-  // because we need the Tag IDs. 
-  // However, we can optimize it.
-  // For now, we keep it separate but use parallel execution where possible or a separate batch if we resolve IDs first.
-  // Since SQLite/D1 doesn't support "INSERT ... RETURNING" in batch reliably across drivers, 
-  // we stick to the Find-then-Insert pattern for tags, but we can batch the final link insertions.
-  
+  // Link tags using batch operations for atomicity
+  // Strategy: 1) Batch insert all tags, 2) Single query to get IDs, 3) Batch link and update usage
   if (input.tagSlugs.length > 0) {
-    for (const tag of input.tagSlugs) {
-      const slug = tag.toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-      if (!slug) continue;
+    // Normalize all tag slugs first
+    const normalizedTags = input.tagSlugs
+      .map(tag => ({
+        name: tag.trim(),
+        slug: tag.toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+      }))
+      .filter(t => t.slug.length > 0);
 
-      // Find or create tag (unfortunately needs read-then-write, hard to batch purely)
-      let tagRow = await db.prepare('SELECT id FROM tags WHERE slug = ?').get<{ id: number }>(slug);
-      if (!tagRow) {
-        await db.prepare('INSERT INTO tags (name, slug, category, usage_count) VALUES (?, ?, ?, 0)').run(tag.trim(), slug, null);
-        tagRow = await db.prepare('SELECT id FROM tags WHERE slug = ?').get<{ id: number }>(slug);
+    if (normalizedTags.length > 0) {
+      // Step 1: Batch insert all tags (INSERT OR IGNORE for existing)
+      const tagInsertStatements = normalizedTags.map(t => ({
+        sql: 'INSERT OR IGNORE INTO tags (name, slug, category, usage_count) VALUES (?, ?, ?, 0)',
+        params: [t.name, t.slug, null]
+      }));
+      await db.batch(tagInsertStatements);
+
+      // Step 2: Get all tag IDs in one query
+      const slugPlaceholders = normalizedTags.map(() => '?').join(', ');
+      const tagRows = await db.prepare(`SELECT id, slug FROM tags WHERE slug IN (${slugPlaceholders})`)
+        .all<{ id: number; slug: string }>(...normalizedTags.map(t => t.slug));
+
+      const slugToId = new Map(tagRows.map(r => [r.slug, r.id]));
+
+      // Step 3: Batch insert card_tags links and update usage counts
+      const linkStatements: { sql: string; params: unknown[] }[] = [];
+      for (const t of normalizedTags) {
+        const tagId = slugToId.get(t.slug);
+        if (tagId) {
+          linkStatements.push({
+            sql: 'INSERT OR IGNORE INTO card_tags (card_id, tag_id) VALUES (?, ?)',
+            params: [input.id, tagId]
+          });
+          linkStatements.push({
+            sql: 'UPDATE tags SET usage_count = usage_count + 1 WHERE id = ?',
+            params: [tagId]
+          });
+        }
       }
 
-      if (tagRow) {
-        // We can batch these if we wanted, but mixed with read-logic it's hard.
-        // We'll optimize by just running them.
-        await db.prepare('INSERT OR IGNORE INTO card_tags (card_id, tag_id) VALUES (?, ?)').run(input.id, tagRow.id);
-        await db.prepare('UPDATE tags SET usage_count = usage_count + 1 WHERE id = ?').run(tagRow.id);
+      if (linkStatements.length > 0) {
+        await db.batch(linkStatements);
       }
     }
   }
@@ -704,21 +724,81 @@ export async function getValidTagSlugs(): Promise<Set<string>> {
 }
 
 /**
- * Delete a card and its associated data
+ * Delete a card and its associated data, including storage blobs
  */
 export async function deleteCard(cardId: string): Promise<void> {
   const db = await getDb();
 
   await removeFtsIndexAsync(cardId);
 
-  // Prepare batch statements
+  // Get all storage URLs from card_versions before deleting
+  const versions = await db.prepare(`
+    SELECT storage_url, image_path, thumbnail_path, saved_assets
+    FROM card_versions
+    WHERE card_id = ?
+  `).all<{
+    storage_url: string;
+    image_path: string | null;
+    thumbnail_path: string | null;
+    saved_assets: string | null;
+  }>(cardId);
+
+  // Collect all storage URLs to delete
+  const storageUrlsToDelete: string[] = [];
+  for (const version of versions) {
+    if (version.storage_url) {
+      storageUrlsToDelete.push(version.storage_url);
+    }
+    if (version.image_path) {
+      storageUrlsToDelete.push(version.image_path);
+    }
+    if (version.thumbnail_path) {
+      storageUrlsToDelete.push(version.thumbnail_path);
+    }
+    // Parse saved_assets JSON array
+    if (version.saved_assets) {
+      try {
+        const assets = JSON.parse(version.saved_assets);
+        if (Array.isArray(assets)) {
+          for (const asset of assets) {
+            // Assets can be strings (paths) or objects with path property
+            const path = typeof asset === 'string' ? asset : asset?.path;
+            if (path) {
+              storageUrlsToDelete.push(path);
+            }
+          }
+        }
+      } catch {
+        console.error(`[deleteCard] Failed to parse saved_assets for card ${cardId}`);
+      }
+    }
+  }
+
+  // Also check for processed images in the images/{cardId}/ directory
+  // These are created by processCardImages() for embedded images
+  storageUrlsToDelete.push(`images/${cardId}`); // Directory marker for cleanup
+
+  // Delete storage blobs (best effort - don't fail if some deletions fail)
+  const { deleteBlob } = await import('@/lib/storage');
+  for (const url of storageUrlsToDelete) {
+    try {
+      // Handle both full URLs (r2://..., file://...) and relative paths
+      const fullUrl = url.includes('://') ? url : `r2://${url}`;
+      await deleteBlob(fullUrl);
+    } catch (error) {
+      console.error(`[deleteCard] Failed to delete storage blob ${url}:`, error);
+      // Continue with other deletions
+    }
+  }
+
+  // Prepare batch statements for database cleanup
   const statements: { sql: string; params: unknown[] }[] = [];
 
   // Get tags to decrement usage counts
   // This read is necessary to know WHICH tags to decrement.
   // We can't batch the read with the writes in one go, but we can batch all the writes.
   const tagSlugs = await db.prepare(`SELECT t.slug FROM card_tags ct JOIN tags t ON ct.tag_id = t.id WHERE ct.card_id = ?`).all<{ slug: string }>(cardId);
-  
+
   for (const { slug } of tagSlugs) {
     statements.push({
       sql: 'UPDATE tags SET usage_count = MAX(0, usage_count - 1) WHERE slug = ?',
@@ -832,16 +912,63 @@ export async function addComment(cardId: string, userId: string, content: string
 }
 
 /**
- * Get comments for a card
+ * Get comments for a card with optional pagination
+ * For threaded comments: paginates root comments, includes all their replies
  */
-export async function getComments(cardId: string): Promise<{ id: string; userId: string; username: string; displayName: string | null; parentId: string | null; content: string; createdAt: number }[]> {
+export async function getComments(
+  cardId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<{
+  comments: { id: string; userId: string; username: string; displayName: string | null; parentId: string | null; content: string; createdAt: number }[];
+  total: number;
+  hasMore: boolean;
+}> {
   const db = await getDb();
-  const rows = await db.prepare(`
-    SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, u.username, u.display_name
-    FROM comments c JOIN users u ON c.user_id = u.id WHERE c.card_id = ? ORDER BY c.created_at ASC
-  `).all<{ id: string; user_id: string; parent_id: string | null; content: string; created_at: number; username: string; display_name: string | null }>(cardId);
+  const limit = Math.min(options?.limit ?? 50, 100); // Max 100 per request
+  const offset = options?.offset ?? 0;
 
-  return rows.map(r => ({ id: r.id, userId: r.user_id, username: r.username, displayName: r.display_name, parentId: r.parent_id, content: r.content, createdAt: r.created_at }));
+  // Get total count of root comments
+  const countResult = await db.prepare(`
+    SELECT COUNT(*) as total FROM comments WHERE card_id = ? AND parent_id IS NULL
+  `).get<{ total: number }>(cardId);
+  const total = countResult?.total ?? 0;
+
+  // Get paginated root comments
+  const rootComments = await db.prepare(`
+    SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, u.username, u.display_name
+    FROM comments c JOIN users u ON c.user_id = u.id
+    WHERE c.card_id = ? AND c.parent_id IS NULL
+    ORDER BY c.created_at ASC
+    LIMIT ? OFFSET ?
+  `).all<{ id: string; user_id: string; parent_id: string | null; content: string; created_at: number; username: string; display_name: string | null }>(cardId, limit, offset);
+
+  // Get all replies for these root comments
+  let allComments = rootComments;
+  if (rootComments.length > 0) {
+    const rootIds = rootComments.map(c => c.id);
+    const placeholders = rootIds.map(() => '?').join(', ');
+    const replies = await db.prepare(`
+      SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, u.username, u.display_name
+      FROM comments c JOIN users u ON c.user_id = u.id
+      WHERE c.card_id = ? AND c.parent_id IN (${placeholders})
+      ORDER BY c.created_at ASC
+    `).all<{ id: string; user_id: string; parent_id: string | null; content: string; created_at: number; username: string; display_name: string | null }>(cardId, ...rootIds);
+    allComments = [...rootComments, ...replies];
+  }
+
+  return {
+    comments: allComments.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      username: r.username,
+      displayName: r.display_name,
+      parentId: r.parent_id,
+      content: r.content,
+      createdAt: r.created_at
+    })),
+    total,
+    hasMore: offset + rootComments.length < total,
+  };
 }
 
 /**

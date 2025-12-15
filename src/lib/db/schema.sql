@@ -52,6 +52,11 @@ CREATE TABLE IF NOT EXISTS cards (
   collection_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
   collection_item_id TEXT,  -- Character UUID from Voxta package
 
+  -- v1.4: Large file upload processing status
+  -- 'complete' = ready, 'pending' = awaiting chunks, 'processing' = extracting assets, 'failed' = error
+  processing_status TEXT DEFAULT 'complete' CHECK (processing_status IN ('complete', 'pending', 'processing', 'failed')),
+  upload_id TEXT,  -- R2 multipart upload ID (null when complete)
+
   -- Timestamps
   created_at INTEGER DEFAULT (unixepoch()),
   updated_at INTEGER DEFAULT (unixepoch())
@@ -308,13 +313,38 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_ms INTEGER NOT NULL
 );
 
+-- v1.4: Admin Settings (feature toggles and site configuration)
+CREATE TABLE IF NOT EXISTS admin_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  description TEXT,
+  updated_at INTEGER DEFAULT (unixepoch()),
+  updated_by TEXT REFERENCES users(id)
+);
+
+-- Default admin settings
+INSERT OR IGNORE INTO admin_settings (key, value, description) VALUES
+  ('image_proxy_enabled', 'true', 'Enable image proxy for external images (bypass hotlink protection)'),
+  ('image_cache_enabled', 'true', 'Cache external images at upload time'),
+  ('registration_enabled', 'true', 'Allow new user registration'),
+  ('uploads_enabled', 'true', 'Allow card uploads'),
+  ('maintenance_mode', 'false', 'Put site in maintenance mode (admin-only access)');
+
 -- Index on trending score for fast ORDER BY
 -- NOTE: Requires trending_score generated column on cards table (added via migration)
 CREATE INDEX IF NOT EXISTS idx_cards_trending ON cards(trending_score DESC);
 
 -- Full-text search index (FTS5)
 -- Indexes card name, description, creator, and creator_notes for fast search
--- Note: Created dynamically in code to avoid conflicts with migrations
+-- Note: D1 does not support FTS5 - queries fall back to LIKE search on Cloudflare
+CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
+  card_id,
+  name,
+  description,
+  creator,
+  creator_notes,
+  tokenize='porter unicode61 remove_diacritics 1'
+);
 
 -- Insert default tags
 INSERT OR IGNORE INTO tags (name, slug, category) VALUES

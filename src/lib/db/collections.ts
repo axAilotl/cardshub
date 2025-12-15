@@ -430,10 +430,16 @@ export async function incrementCollectionDownloads(id: string): Promise<void> {
 }
 
 /**
- * Delete a collection
+ * Delete a collection and its associated storage blobs
+ * Does NOT delete the cards in the collection (use deleteCollectionWithCards for that)
  */
 export async function deleteCollection(id: string): Promise<void> {
   const db = await getDatabase();
+
+  // Get collection storage URLs before deleting
+  const collection = await db.prepare(`
+    SELECT storage_url, thumbnail_path FROM collections WHERE id = ?
+  `).get<{ storage_url: string | null; thumbnail_path: string | null }>(id);
 
   // First unlink all cards from this collection
   await db.prepare(`
@@ -442,6 +448,48 @@ export async function deleteCollection(id: string): Promise<void> {
 
   // Then delete the collection
   await db.prepare(`DELETE FROM collections WHERE id = ?`).run(id);
+
+  // Delete storage blobs (after DB deletion to ensure consistency)
+  if (collection) {
+    const { deleteBlob } = await import('@/lib/storage');
+    const urlsToDelete = [collection.storage_url, collection.thumbnail_path].filter(Boolean) as string[];
+
+    for (const url of urlsToDelete) {
+      try {
+        const fullUrl = url.includes('://') ? url : `r2://${url}`;
+        await deleteBlob(fullUrl);
+      } catch (error) {
+        console.error(`[deleteCollection] Failed to delete storage blob ${url}:`, error);
+      }
+    }
+  }
+}
+
+/**
+ * Delete a collection and all its cards (including their storage)
+ */
+export async function deleteCollectionWithCards(id: string): Promise<void> {
+  const db = await getDatabase();
+
+  // Get all card IDs in this collection
+  const cards = await db.prepare(`
+    SELECT id FROM cards WHERE collection_id = ?
+  `).all<{ id: string }>(id);
+
+  // Import deleteCard to properly clean up each card
+  const { deleteCard } = await import('./cards');
+
+  // Delete each card (this handles storage cleanup)
+  for (const card of cards) {
+    try {
+      await deleteCard(card.id);
+    } catch (error) {
+      console.error(`[deleteCollectionWithCards] Failed to delete card ${card.id}:`, error);
+    }
+  }
+
+  // Now delete the collection itself
+  await deleteCollection(id);
 }
 
 /**
