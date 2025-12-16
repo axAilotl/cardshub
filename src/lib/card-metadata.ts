@@ -9,8 +9,8 @@
  * - @character-foundry/loader: validateClientMetadata() for server-side validation
  */
 
-import { deriveFeatures } from '@character-foundry/schemas';
-import { countImages } from '@character-foundry/image-utils';
+import { deriveFeatures } from '@character-foundry/character-foundry/schemas';
+import { countImages } from '@character-foundry/character-foundry/image-utils';
 import type { CCv3CharacterBook } from '@character-foundry/character-foundry/schemas';
 
 /**

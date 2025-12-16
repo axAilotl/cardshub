@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isImageProxyEnabled } from '@/lib/db/settings';
-import { isURLSafe } from '@character-foundry/image-utils';
+import { isURLSafe } from '@character-foundry/character-foundry/image-utils';
 
 // Maximum image size to proxy (10MB)
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;

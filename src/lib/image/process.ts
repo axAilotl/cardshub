@@ -10,7 +10,7 @@
 import { isCloudflareRuntime } from '@/lib/db';
 import { getR2, getImages } from '@/lib/cloudflare/env';
 import { isImageCacheEnabled } from '@/lib/db/settings';
-import { extractImageUrls as extractImageUrlsCanonical, isURLSafe } from '@character-foundry/image-utils';
+import { extractImageUrls as extractImageUrlsCanonical, isURLSafe } from '@character-foundry/character-foundry/image-utils';
 import crypto from 'crypto';
 
 // Quality settings
