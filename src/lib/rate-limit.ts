@@ -25,26 +25,39 @@ export interface RateLimitConfig {
 /**
  * Sliding window rate limiter using database for persistence.
  * Works correctly on serverless/edge (Cloudflare Workers, Vercel Edge, etc.)
+ *
+ * Uses atomic UPSERT to prevent race conditions where concurrent requests
+ * could bypass the limit by reading the same count before incrementing.
  */
 export async function rateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
   const db = await getDatabase();
   const now = Date.now();
-  const windowStart = now - windowMs;
 
-  // Get or create bucket, cleaning expired data atomically
-  // Use UPSERT pattern for atomic increment
-  const bucket = await db.prepare(`
-    SELECT count, window_start FROM rate_limit_buckets WHERE key = ?
-  `).get<{ count: number; window_start: number }>(key);
+  // Atomic upsert with RETURNING - prevents race conditions
+  // If key doesn't exist: inserts with count=1
+  // If key exists but window expired: resets to count=1 with new window
+  // If key exists and window valid: increments count
+  const result = await db.prepare(`
+    INSERT INTO rate_limit_buckets (key, count, window_start, window_ms)
+    VALUES (?, 1, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      count = CASE
+        WHEN ? > window_start + window_ms THEN 1
+        ELSE count + 1
+      END,
+      window_start = CASE
+        WHEN ? > window_start + window_ms THEN ?
+        ELSE window_start
+      END,
+      window_ms = ?
+    RETURNING count, window_start
+  `).get<{ count: number; window_start: number }>(
+    key, now, windowMs,  // INSERT values
+    now, now, now, windowMs  // UPDATE case checks and values
+  );
 
-  if (!bucket || bucket.window_start < windowStart) {
-    // Bucket expired or doesn't exist - create new one with count=1
-    await db.prepare(`
-      INSERT INTO rate_limit_buckets (key, count, window_start, window_ms)
-      VALUES (?, 1, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET count = 1, window_start = ?, window_ms = ?
-    `).run(key, now, windowMs, now, windowMs);
-
+  if (!result) {
+    // Fallback if RETURNING not supported (shouldn't happen)
     return {
       allowed: true,
       remaining: limit - 1,
@@ -52,11 +65,10 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
     };
   }
 
-  // Bucket exists and is within window
-  const count = bucket.count;
-  const resetAt = bucket.window_start + windowMs;
+  const { count, window_start } = result;
+  const resetAt = window_start + windowMs;
 
-  if (count >= limit) {
+  if (count > limit) {
     const retryAfter = Math.ceil((resetAt - now) / 1000);
     return {
       allowed: false,
@@ -66,14 +78,9 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
     };
   }
 
-  // Increment counter
-  await db.prepare(`
-    UPDATE rate_limit_buckets SET count = count + 1 WHERE key = ?
-  `).run(key);
-
   return {
     allowed: true,
-    remaining: limit - count - 1,
+    remaining: limit - count,
     resetAt,
   };
 }

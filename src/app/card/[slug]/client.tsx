@@ -16,6 +16,7 @@ import {
   type Section,
 } from './components';
 import type { CharacterCardV3 } from '@/types/card';
+import { sanitizeCss } from '@/lib/security/css-sanitizer';
 
 interface CardDetailClientProps {
   card: CardDetail;
@@ -42,7 +43,13 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
   const customCss = useMemo(() => {
     if (!processedCreatorNotes) return null;
     const styleMatch = processedCreatorNotes.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-    return styleMatch ? styleMatch[1] : null;
+    if (!styleMatch) return null;
+
+    // Sanitize and scope CSS to card page only
+    return sanitizeCss(styleMatch[1], {
+      scope: '[data-card-page]',
+      maxSelectors: 300,
+    });
   }, [processedCreatorNotes]);
 
   // Inject custom CSS that persists across tabs

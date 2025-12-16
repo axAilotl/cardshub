@@ -27,7 +27,7 @@ A platform for sharing, discovering, and managing AI character cards. Supports C
 - **Storage:** Local filesystem / Cloudflare R2
 - **Auth:** Cookie-based sessions with bcrypt
 - **Validation:** Zod schemas
-- **Testing:** Vitest (185 tests)
+- **Testing:** Vitest (289 tests)
 - **Styling:** Tailwind CSS v4
 
 ## Quick Start
@@ -66,10 +66,8 @@ npm run cf:r2:create
 ALLOW_AUTO_ADMIN=true          # Enable admin bootstrap
 ADMIN_BOOTSTRAP_PASSWORD=xxx   # Bootstrap password
 DATABASE_PATH=./cardshub.db    # SQLite database path
-GITHUB_TOKEN=ghp_xxx           # GitHub token for @character-foundry packages
 
 # Production (Cloudflare secrets)
-GITHUB_TOKEN=ghp_xxx           # Required for npm install (GitHub Packages auth)
 DISCORD_CLIENT_ID=xxx          # Discord OAuth
 DISCORD_CLIENT_SECRET=xxx
 
@@ -81,9 +79,6 @@ CLOUDFLARE_ACCOUNT_ID=xxx      # Account ID for R2 S3 endpoint
 # Optional
 NEXT_PUBLIC_APP_URL=https://your-domain.com
 ```
-
-> **Note:** The `GITHUB_TOKEN` is required to install `@character-foundry/*` packages from GitHub Packages.
-> Set it as an environment variable in Cloudflare Pages/Workers settings.
 
 ## Scripts
 
@@ -123,10 +118,6 @@ Schema changes in `schema.sql` are NOT auto-applied to D1. Run migrations manual
 npx wrangler d1 execute cardshub-db --remote --command "ALTER TABLE cards ADD COLUMN new_column TEXT"
 ```
 
-### CI fails with 403 on @character-foundry packages
-New packages need visibility set to `public` and linked to source repo. Go to:
-https://github.com/orgs/character-foundry/packages → Package Settings → Visibility: Public + Link Repository
-
 ### API works locally but fails on Cloudflare
 - Don't use generated columns in queries (use inline calculations)
 - Don't use FTS5 (falls back to LIKE on D1)
@@ -138,7 +129,7 @@ Deployment is manual: `npm run cf:build && npm run cf:deploy`
 ### Browser crashes with `createRequire is not a function`
 Update `@character-foundry/*` packages - older versions bundled fflate's Node.js code:
 ```bash
-GITHUB_TOKEN=xxx npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
+npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
 ```
 Verify fix: `grep -l "createRequire" node_modules/@character-foundry/*/dist/*` should return nothing.
 

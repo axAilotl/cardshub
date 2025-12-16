@@ -27,7 +27,7 @@ import {
   WidgetRegistry,
   type SettingsPanel,
   type UIHints,
-} from '@character-foundry/app-framework';
+} from '@character-foundry/character-foundry/app-framework';
 import {
   DisplayPreferencesSchema,
   displayPreferencesDefaults,

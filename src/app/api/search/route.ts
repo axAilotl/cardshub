@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
+import { isCloudflareRuntime } from '@/lib/db';
 import { parseQuery, SearchQuerySchema } from '@/lib/validations';
 
 interface CardSearchResult {
@@ -83,17 +84,37 @@ export async function GET(request: NextRequest) {
     // For LIKE search on collections (FTS not available for collections)
     const likePattern = `%${searchTerm}%`;
 
+    // Detect runtime - D1 doesn't support FTS5
+    const useCloudflare = isCloudflareRuntime();
+
     // Count total card results
-    const cardCountQuery = `
-      SELECT COUNT(*) as total
-      FROM cards c
-      INNER JOIN cards_fts fts ON c.id = fts.card_id
-      WHERE cards_fts MATCH ?
-        AND ${cardVisibilityCondition}
-        AND c.moderation_state != 'blocked'
-    `;
-    const cardTotalResult = await db.prepare(cardCountQuery).get<{ total: number }>(ftsQuery);
-    const cardTotal = cardTotalResult?.total || 0;
+    let cardTotal = 0;
+    if (useCloudflare) {
+      // Fallback: LIKE search (no FTS5 on D1)
+      const cardCountQuery = `
+        SELECT COUNT(*) as total
+        FROM cards c
+        WHERE (c.name LIKE ? OR c.description LIKE ? OR c.creator LIKE ?)
+          AND ${cardVisibilityCondition}
+          AND c.moderation_state != 'blocked'
+      `;
+      const cardTotalResult = await db.prepare(cardCountQuery).get<{ total: number }>(
+        likePattern, likePattern, likePattern
+      );
+      cardTotal = cardTotalResult?.total || 0;
+    } else {
+      // FTS5 search (local SQLite only)
+      const cardCountQuery = `
+        SELECT COUNT(*) as total
+        FROM cards c
+        INNER JOIN cards_fts fts ON c.id = fts.card_id
+        WHERE cards_fts MATCH ?
+          AND ${cardVisibilityCondition}
+          AND c.moderation_state != 'blocked'
+      `;
+      const cardTotalResult = await db.prepare(cardCountQuery).get<{ total: number }>(ftsQuery);
+      cardTotal = cardTotalResult?.total || 0;
+    }
 
     // Count total collection results
     const collectionCountQuery = `
@@ -108,33 +129,8 @@ export async function GET(request: NextRequest) {
     const collectionTotal = collectionTotalResult?.total || 0;
     const total = cardTotal + collectionTotal;
 
-    // Get ranked card results with BM25 scoring and snippets
-    // Note: bm25() column indices: 0=card_id (unindexed), 1=name, 2=description, 3=creator, 4=creator_notes
-    const cardSearchQuery = `
-      SELECT
-        c.id,
-        c.slug,
-        c.name,
-        c.description,
-        c.creator,
-        v.thumbnail_path,
-        v.tokens_total,
-        c.upvotes,
-        c.downvotes,
-        c.downloads_count,
-        bm25(cards_fts, 0.0, 10.0, 5.0, 2.0, 1.0) as rank,
-        snippet(cards_fts, 2, '<mark>', '</mark>', '...', 32) as snippet
-      FROM cards c
-      INNER JOIN cards_fts fts ON c.id = fts.card_id
-      LEFT JOIN card_versions v ON c.head_version_id = v.id
-      WHERE cards_fts MATCH ?
-        AND ${cardVisibilityCondition}
-        AND c.moderation_state != 'blocked'
-      ORDER BY rank
-      LIMIT ? OFFSET ?
-    `;
-
-    const cardRows = await db.prepare(cardSearchQuery).all<{
+    // Get ranked card results
+    let cardRows: Array<{
       id: string;
       slug: string;
       name: string;
@@ -147,7 +143,63 @@ export async function GET(request: NextRequest) {
       downloads_count: number;
       rank: number;
       snippet: string | null;
-    }>(ftsQuery, limit, offset);
+    }>;
+
+    if (useCloudflare) {
+      // Fallback: LIKE search (no FTS5 on D1)
+      const cardSearchQuery = `
+        SELECT
+          c.id,
+          c.slug,
+          c.name,
+          c.description,
+          c.creator,
+          v.thumbnail_path,
+          v.tokens_total,
+          c.upvotes,
+          c.downvotes,
+          c.downloads_count,
+          0 as rank,
+          NULL as snippet
+        FROM cards c
+        LEFT JOIN card_versions v ON c.head_version_id = v.id
+        WHERE (c.name LIKE ? OR c.description LIKE ? OR c.creator LIKE ?)
+          AND ${cardVisibilityCondition}
+          AND c.moderation_state != 'blocked'
+        ORDER BY c.downloads_count DESC
+        LIMIT ? OFFSET ?
+      `;
+      cardRows = await db.prepare(cardSearchQuery).all(
+        likePattern, likePattern, likePattern, limit, offset
+      );
+    } else {
+      // FTS5 search with BM25 ranking and snippets (local SQLite only)
+      // Note: bm25() column indices: 0=card_id (unindexed), 1=name, 2=description, 3=creator, 4=creator_notes
+      const cardSearchQuery = `
+        SELECT
+          c.id,
+          c.slug,
+          c.name,
+          c.description,
+          c.creator,
+          v.thumbnail_path,
+          v.tokens_total,
+          c.upvotes,
+          c.downvotes,
+          c.downloads_count,
+          bm25(cards_fts, 0.0, 10.0, 5.0, 2.0, 1.0) as rank,
+          snippet(cards_fts, 2, '<mark>', '</mark>', '...', 32) as snippet
+        FROM cards c
+        INNER JOIN cards_fts fts ON c.id = fts.card_id
+        LEFT JOIN card_versions v ON c.head_version_id = v.id
+        WHERE cards_fts MATCH ?
+          AND ${cardVisibilityCondition}
+          AND c.moderation_state != 'blocked'
+        ORDER BY rank
+        LIMIT ? OFFSET ?
+      `;
+      cardRows = await db.prepare(cardSearchQuery).all(ftsQuery, limit, offset);
+    }
 
     // Get collection results (simple LIKE search - no FTS for collections)
     // Only fetch if we have room in the limit

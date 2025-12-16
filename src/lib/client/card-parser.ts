@@ -1,10 +1,10 @@
 /**
  * Client-side card parser using character-foundry packages
  */
-import { parseCard, type ParseResult, type ExtractedAsset as FoundryAsset } from '@character-foundry/loader';
-import { isVoxta, readVoxta } from '@character-foundry/voxta';
-import { toUint8Array } from '@character-foundry/core';
-import type { CCv3Data, CCv3CharacterBook } from '@character-foundry/schemas';
+import { parseCard, type ParseResult, type ExtractedAsset as FoundryAsset } from '@character-foundry/character-foundry/loader';
+import { isVoxta, readVoxta } from '@character-foundry/character-foundry/voxta';
+import { toUint8Array } from '@character-foundry/character-foundry/core';
+import type { CCv3Data, CCv3CharacterBook } from '@character-foundry/character-foundry/schemas';
 import { countCardTokens, type TokenCounts } from './tokenizer';
 
 export type SourceFormat = 'png' | 'json' | 'charx' | 'voxta';
@@ -37,7 +37,7 @@ export interface ParsedCard {
   characterVersion: string;
   tokens: TokenCounts;
   metadata: CardMetadata;
-  lorebook?: CCv3CharacterBook;
+  lorebook?: CCv3CharacterBook | null;
 }
 
 export interface ExtractedAsset {
@@ -68,16 +68,7 @@ import { extractCardMetadata } from '@/lib/card-metadata';
  */
 function toParsedCard(result: ParseResult): ParsedCard {
   const card = result.card;
-
-  // WORKAROUND: loader 0.1.9 has a bug where V2-to-V3 normalization can produce
-  // empty card.data while originalShape.data has the correct values. Fall back
-  // to originalShape when normalized data is missing the name field.
-  let data = card.data;
-  const originalData = (result.originalShape as { data?: typeof data })?.data;
-  if (!data.name && originalData?.name) {
-    console.log('[card-parser] WORKAROUND: Using originalShape.data due to empty normalized data');
-    data = originalData;
-  }
+  const data = card.data;
 
   // Calculate token counts
   const tokens = countCardTokens(data);

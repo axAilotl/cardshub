@@ -86,7 +86,7 @@ export function HtmlContent({ html, className }: { html: string; className?: str
       'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
       'blockquote', 'code', 'pre', 'span', 'div', 'hr',
       'table', 'thead', 'tbody', 'tr', 'th', 'td',
-      'style', // Allow style tags for creator CSS customization
+      // 'style', // REMOVED - CSS must be extracted separately to prevent XSS
     ],
     ALLOWED_ATTR: [
       'href', 'src', 'alt', 'class', 'style', 'target', 'rel',

@@ -147,6 +147,11 @@ function wrapD1(db: D1Database): AsyncDb {
  * This function should NEVER be called on Cloudflare Workers.
  */
 export async function getAsyncDb(): Promise<AsyncDb> {
+  // CRITICAL: Must check BEFORE any dynamic imports to prevent fs/better-sqlite3 from loading on Workers
+  if (isCloudflare()) {
+    throw new Error('getAsyncDb() is not supported on Cloudflare Workers. Use getDatabase() instead.');
+  }
+
   if (localDbInstance) return localDbInstance;
 
   // Dynamic import for Node.js modules - works better with Next.js bundling

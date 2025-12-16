@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getDatabase } from '@/lib/db/async-db';
-import { deleteCollection, updateCollectionVisibility } from '@/lib/db/collections';
+import { deleteCollection, deleteCollectionWithCards, updateCollectionVisibility } from '@/lib/db/collections';
 
 /**
  * DELETE /api/admin/collections/[collectionId]
@@ -24,12 +24,12 @@ export async function DELETE(
     const { deleteCards } = await request.json().catch(() => ({ deleteCards: false }));
 
     if (deleteCards) {
-      // Delete all cards in the collection first
-      const db = await getDatabase();
-      await db.prepare('DELETE FROM cards WHERE collection_id = ?').run(collectionId);
+      // Use deleteCollectionWithCards to properly clean up storage
+      await deleteCollectionWithCards(collectionId);
+    } else {
+      // Just delete collection, unlink cards
+      await deleteCollection(collectionId);
     }
-
-    await deleteCollection(collectionId);
 
     return NextResponse.json({ success: true });
   } catch (error) {

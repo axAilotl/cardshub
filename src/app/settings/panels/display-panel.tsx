@@ -7,7 +7,7 @@
  * Values are stored in localStorage via the Settings context.
  */
 
-import { AutoForm } from '@character-foundry/app-framework';
+import { AutoForm } from '@character-foundry/character-foundry/app-framework';
 import { useSettings } from '@/lib/settings';
 import { settingsRegistry, widgetRegistry } from '@/lib/settings/registry';
 import { DisplayPreferencesSchema, type DisplayPreferences } from '@/lib/settings/schemas';

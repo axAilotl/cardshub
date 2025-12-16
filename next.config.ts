@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
     if (process.env.CLOUDFLARE_PAGES === 'true' && isServer) {
       config.externals = config.externals || [];
       if (Array.isArray(config.externals)) {
-        config.externals.push('better-sqlite3', 'sharp');
+        config.externals.push('better-sqlite3', 'sharp', 'winston');
       }
     }
 
@@ -62,18 +62,6 @@ const nextConfig: NextConfig = {
     serverExternalPackages: [
       'better-sqlite3',
       'tiktoken',
-      '@character-foundry/voxta',
-      '@character-foundry/loader',
-      '@character-foundry/charx',
-      '@character-foundry/png',
-      '@character-foundry/core',
-      '@character-foundry/federation',
-      '@character-foundry/tokenizers',
-      '@character-foundry/normalizer',
-      '@character-foundry/exporter',
-      '@character-foundry/schemas',
-      '@character-foundry/media',
-      '@character-foundry/lorebook',
     ],
   } : {}),
 };

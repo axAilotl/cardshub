@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth/context';
 import { cn } from '@/lib/utils/cn';
 import { formatMonthYear } from '@/lib/utils/format';
 import { CARDS_PER_PAGE } from '@/lib/constants';
+import { sanitizeCss } from '@/lib/security/css-sanitizer';
 
 interface UserProfile {
   id: string;
@@ -288,7 +289,12 @@ export default function UserProfilePage() {
 
       {/* Custom Profile CSS */}
       {profile.profileCss && (
-        <style dangerouslySetInnerHTML={{ __html: profile.profileCss }} />
+        <style dangerouslySetInnerHTML={{
+          __html: sanitizeCss(profile.profileCss, {
+            scope: '[data-profile]',
+            maxSelectors: 500,
+          }) || ''
+        }} />
       )}
 
       {/* Tabs */}

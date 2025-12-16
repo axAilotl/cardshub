@@ -3,11 +3,21 @@ import { register, SESSION_COOKIE_NAME, SESSION_EXPIRY_DAYS } from '@/lib/auth';
 import { applyRateLimit, getClientId } from '@/lib/rate-limit';
 import { parseBody, RegisterSchema } from '@/lib/validations';
 import { logAuthEvent, logRateLimit, logError } from '@/lib/logger';
+import { isRegistrationEnabled } from '@/lib/db/settings';
 
 export async function POST(request: NextRequest) {
   const clientId = getClientId(request);
 
   try {
+    // Check if registration is enabled
+    const registrationAllowed = await isRegistrationEnabled();
+    if (!registrationAllowed) {
+      return NextResponse.json(
+        { error: 'Registration is currently disabled' },
+        { status: 403 }
+      );
+    }
+
     // Apply rate limiting
     const rl = await applyRateLimit(clientId, 'register');
     logRateLimit(clientId, 'register', rl.allowed, rl.remaining);

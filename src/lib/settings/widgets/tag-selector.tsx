@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import type { FieldWidgetProps } from '@character-foundry/app-framework';
+import type { FieldWidgetProps } from '@character-foundry/character-foundry/app-framework';
 import { TagChipSelector, type TagInfo } from '@/components/ui/tag-chip-selector';
 
 interface TagSelectorWidgetProps extends FieldWidgetProps<string[]> {

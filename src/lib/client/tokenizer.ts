@@ -1,25 +1,21 @@
 /**
- * Client-side tokenizer using gpt-tokenizer (pure JS, browser-compatible)
- * Uses cl100k_base encoding (GPT-4/3.5-turbo compatible)
+ * Client-side tokenizer backed by Character Foundry tokenizers.
+ * Browser-compatible (pure JS) with cl100k_base (GPT-4/3.5-turbo compatible) as default.
  */
-import { encode } from 'gpt-tokenizer';
+import { getTokenizer } from '@character-foundry/character-foundry/tokenizers';
+
+const DEFAULT_TOKENIZER_ID = 'gpt-4';
+const defaultTokenizer = getTokenizer(DEFAULT_TOKENIZER_ID);
 
 /**
- * Count tokens in a string using gpt-tokenizer
+ * Count tokens in a string using Character Foundry tokenizers
  */
 export function countTokens(text: string): number {
   if (!text || text.trim() === '') {
     return 0;
   }
 
-  try {
-    const tokens = encode(text);
-    return tokens.length;
-  } catch (error) {
-    console.error('Error counting tokens:', error);
-    // Fallback to rough estimate
-    return Math.ceil(text.length / 4);
-  }
+  return defaultTokenizer.count(text);
 }
 
 /**
@@ -57,13 +53,13 @@ export interface TokenCounts {
  * Count tokens for all card fields
  */
 export function countCardTokens(data: {
-  description?: string;
-  personality?: string;
-  scenario?: string;
-  mes_example?: string;
-  first_mes?: string;
-  system_prompt?: string;
-  post_history_instructions?: string;
+  description?: string | null;
+  personality?: string | null;
+  scenario?: string | null;
+  mes_example?: string | null;
+  first_mes?: string | null;
+  system_prompt?: string | null;
+  post_history_instructions?: string | null;
 }): TokenCounts {
   const tokens: TokenCounts = {
     description: countTokens(data.description || ''),

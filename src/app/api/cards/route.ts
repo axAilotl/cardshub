@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCards, createCard, computeContentHash, checkBlockedTags } from '@/lib/db/cards';
-import { parseCard } from '@character-foundry/loader';
-import { isVoxta, readVoxta, voxtaToCCv3, enrichVoxtaAsset, type VoxtaData, type VoxtaBook, type ExtractedVoxtaAsset } from '@character-foundry/voxta';
-import { toUint8Array } from '@character-foundry/core';
+import { parseCard } from '@character-foundry/character-foundry/loader';
+import { isVoxta, readVoxta, voxtaToCCv3, enrichVoxtaAsset, type VoxtaData, type VoxtaBook, type ExtractedVoxtaAsset } from '@character-foundry/character-foundry/voxta';
+import { toUint8Array } from '@character-foundry/character-foundry/core';
 import { countCardTokens } from '@/lib/client/tokenizer';
 import { saveAssets } from '@/lib/image';
 import { processThumbnail, processCardImages } from '@/lib/image/process';
@@ -24,8 +24,8 @@ import {
   generateCollectionSlug,
 } from '@/lib/db/collections';
 
-// Use shared utility for counting embedded images
-import { countEmbeddedImages } from '@/lib/card-metadata';
+// Use shared utility for counting embedded images and extracting metadata
+import { extractCardMetadata } from '@/lib/card-metadata';
 
 /**
  * Convert Voxta assets to our standard format
@@ -200,14 +200,8 @@ async function handleVoxtaCollectionUpload(
     // Calculate tokens
     const tokens = countCardTokens(cardData);
 
-    // Count embedded images
-    const embeddedImages = countEmbeddedImages([
-      cardData.description,
-      cardData.first_mes,
-      ...(cardData.alternate_greetings || []),
-      cardData.mes_example,
-      cardData.creator_notes || '',
-    ]);
+    // Extract card metadata using canonical implementation
+    const metadata = extractCardMetadata(cardData);
 
     // Find character thumbnail
     let charImagePath: string | null = null;
@@ -301,12 +295,12 @@ async function handleVoxtaCollectionUpload(
         specVersion: 'v3',
         sourceFormat: 'voxta',
         tokens,
-        hasAltGreetings: (cardData.alternate_greetings?.length || 0) > 0,
-        altGreetingsCount: cardData.alternate_greetings?.length || 0,
-        hasLorebook: !!(cardData.character_book?.entries?.length),
-        lorebookEntriesCount: cardData.character_book?.entries?.length || 0,
-        hasEmbeddedImages: embeddedImages > 0,
-        embeddedImagesCount: embeddedImages,
+        hasAltGreetings: metadata.hasAlternateGreetings,
+        altGreetingsCount: metadata.alternateGreetingsCount,
+        hasLorebook: metadata.hasLorebook,
+        lorebookEntriesCount: metadata.lorebookEntriesCount,
+        hasEmbeddedImages: metadata.hasEmbeddedImages,
+        embeddedImagesCount: metadata.embeddedImagesCount,
         hasAssets: (extractedChar.assets?.length || 0) > 0,
         assetsCount: savedAssetsData.length || (extractedChar.assets?.length || 0),
         savedAssets: savedAssetsData.length > 0 ? JSON.stringify(savedAssetsData) : null,
@@ -400,9 +394,15 @@ export async function GET(request: NextRequest) {
 
     const result = await getCards(filters, userId);
 
+    // Only use public cache for anonymous requests (no userId)
+    // Authenticated requests include isFavorited and should not be cached by CDN
+    const cacheControl = userId
+      ? 'private, max-age=0, must-revalidate'  // Authenticated: no CDN cache
+      : 'public, s-maxage=60, stale-while-revalidate=30';  // Anonymous: 60s cache
+
     return NextResponse.json(result, {
       headers: {
-        'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+        'Cache-Control': cacheControl,
       },
     });
   } catch (error) {
@@ -428,6 +428,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Authentication required to upload cards' },
         { status: 401 }
+      );
+    }
+
+    // Check if uploads are enabled
+    const { isUploadsEnabled } = await import('@/lib/db/settings');
+    const uploadsAllowed = await isUploadsEnabled();
+    if (!uploadsAllowed) {
+      return NextResponse.json(
+        { error: 'Card uploads are currently disabled' },
+        { status: 403 }
       );
     }
 
@@ -569,13 +579,7 @@ export async function POST(request: NextRequest) {
       const ccv3 = voxtaToCCv3(extractedChar.data, referencedBooks);
       const cardData = ccv3.data;
       const tokens = countCardTokens(cardData);
-      const embeddedImages = countEmbeddedImages([
-        cardData.description,
-        cardData.first_mes,
-        ...(cardData.alternate_greetings || []),
-        cardData.mes_example,
-        cardData.creator_notes || '',
-      ]);
+      const metadata = extractCardMetadata(cardData);
 
       parsedCard = {
         name: cardData.name || 'Unknown',
@@ -586,12 +590,12 @@ export async function POST(request: NextRequest) {
         sourceFormat: 'voxta',
         tokens,
         metadata: {
-          hasAlternateGreetings: (cardData.alternate_greetings?.length || 0) > 0,
-          alternateGreetingsCount: cardData.alternate_greetings?.length || 0,
-          hasLorebook: !!(cardData.character_book?.entries?.length),
-          lorebookEntriesCount: cardData.character_book?.entries?.length || 0,
-          hasEmbeddedImages: embeddedImages > 0,
-          embeddedImagesCount: embeddedImages,
+          hasAlternateGreetings: metadata.hasAlternateGreetings,
+          alternateGreetingsCount: metadata.alternateGreetingsCount,
+          hasLorebook: metadata.hasLorebook,
+          lorebookEntriesCount: metadata.lorebookEntriesCount,
+          hasEmbeddedImages: metadata.hasEmbeddedImages,
+          embeddedImagesCount: metadata.embeddedImagesCount,
         },
         tags: cardData.tags || [],
         raw: ccv3,
@@ -650,13 +654,7 @@ export async function POST(request: NextRequest) {
             const ccv3 = voxtaToCCv3(extractedChar.data, referencedBooks);
             const cardDataFromVoxta = ccv3.data;
             const tokens = countCardTokens(cardDataFromVoxta);
-            const embeddedImages = countEmbeddedImages([
-              cardDataFromVoxta.description,
-              cardDataFromVoxta.first_mes,
-              ...(cardDataFromVoxta.alternate_greetings || []),
-              cardDataFromVoxta.mes_example,
-              cardDataFromVoxta.creator_notes || '',
-            ]);
+            const metadata = extractCardMetadata(cardDataFromVoxta);
 
             parsedCard = {
               name: cardDataFromVoxta.name || 'Unknown',
@@ -667,12 +665,12 @@ export async function POST(request: NextRequest) {
               sourceFormat: 'voxta',
               tokens,
               metadata: {
-                hasAlternateGreetings: (cardDataFromVoxta.alternate_greetings?.length || 0) > 0,
-                alternateGreetingsCount: cardDataFromVoxta.alternate_greetings?.length || 0,
-                hasLorebook: !!(cardDataFromVoxta.character_book?.entries?.length),
-                lorebookEntriesCount: cardDataFromVoxta.character_book?.entries?.length || 0,
-                hasEmbeddedImages: embeddedImages > 0,
-                embeddedImagesCount: embeddedImages,
+                hasAlternateGreetings: metadata.hasAlternateGreetings,
+                alternateGreetingsCount: metadata.alternateGreetingsCount,
+                hasLorebook: metadata.hasLorebook,
+                lorebookEntriesCount: metadata.lorebookEntriesCount,
+                hasEmbeddedImages: metadata.hasEmbeddedImages,
+                embeddedImagesCount: metadata.embeddedImagesCount,
               },
               tags: cardDataFromVoxta.tags || [],
               raw: ccv3,
@@ -713,15 +711,7 @@ export async function POST(request: NextRequest) {
 
       // Only process parseResult if we didn't handle Voxta above
       if (parseResult) {
-        // WORKAROUND: loader 0.1.9 has a bug where V2-to-V3 normalization can produce
-        // empty card.data while originalShape.data has the correct values. Fall back
-        // to originalShape when normalized data is missing the name field.
-        let cardData = parseResult.card.data;
-        const originalData = (parseResult.originalShape as { data?: typeof cardData })?.data;
-        if (!cardData.name && originalData?.name) {
-          console.log('[Upload] WORKAROUND: Using originalShape.data due to empty normalized data');
-          cardData = originalData;
-        }
+        const cardData = parseResult.card.data;
 
         // Find main image from assets
         // loader 0.1.1+ provides isMain icon with tEXt chunks stripped (clean PNG for thumbnails)
@@ -748,14 +738,8 @@ export async function POST(request: NextRequest) {
           // Full server-side parsing (fallback for clients without JS)
           const tokens = countCardTokens(cardData);
 
-          // Count embedded images
-          const embeddedImages = countEmbeddedImages([
-            cardData.description,
-            cardData.first_mes,
-            ...(cardData.alternate_greetings || []),
-            cardData.mes_example,
-            cardData.creator_notes || '',
-          ]);
+          // Extract card metadata using canonical implementation
+          const metadata = extractCardMetadata(cardData);
 
           // Map container format to source format
           const sourceFormat = parseResult.containerFormat === 'unknown' ? 'json' : parseResult.containerFormat;
@@ -769,12 +753,12 @@ export async function POST(request: NextRequest) {
             sourceFormat: sourceFormat as 'png' | 'json' | 'charx' | 'voxta',
             tokens,
             metadata: {
-              hasAlternateGreetings: (cardData.alternate_greetings?.length || 0) > 0,
-              alternateGreetingsCount: cardData.alternate_greetings?.length || 0,
-              hasLorebook: !!(cardData.character_book?.entries?.length),
-              lorebookEntriesCount: cardData.character_book?.entries?.length || 0,
-              hasEmbeddedImages: embeddedImages > 0,
-              embeddedImagesCount: embeddedImages,
+              hasAlternateGreetings: metadata.hasAlternateGreetings,
+              alternateGreetingsCount: metadata.alternateGreetingsCount,
+              hasLorebook: metadata.hasLorebook,
+              lorebookEntriesCount: metadata.lorebookEntriesCount,
+              hasEmbeddedImages: metadata.hasEmbeddedImages,
+              embeddedImagesCount: metadata.embeddedImagesCount,
             },
             tags: cardData.tags || [],
             raw: parseResult.card,

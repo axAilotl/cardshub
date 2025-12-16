@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isImageProxyEnabled } from '@/lib/db/settings';
+import { isURLSafe } from '@character-foundry/image-utils';
 
 // Maximum image size to proxy (10MB)
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -31,42 +32,6 @@ const ALLOWED_CONTENT_TYPES = [
   'image/avif',
   'image/bmp',
 ];
-
-/**
- * Check if a hostname is an internal/private address (SSRF protection)
- */
-function isInternalHost(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-
-  // Block localhost variants
-  if (lower === 'localhost' || lower === '127.0.0.1' || lower === '::1' || lower === '0.0.0.0') {
-    return true;
-  }
-
-  // Block AWS metadata endpoint
-  if (lower === '169.254.169.254') {
-    return true;
-  }
-
-  // Block private IP ranges
-  const privateRanges = [
-    /^10\./,                          // 10.0.0.0/8
-    /^172\.(1[6-9]|2\d|3[01])\./,     // 172.16.0.0/12
-    /^192\.168\./,                    // 192.168.0.0/16
-    /^127\./,                         // 127.0.0.0/8
-    /^169\.254\./,                    // Link-local
-    /^fc[0-9a-f]{2}:/i,              // IPv6 unique local
-    /^fe80:/i,                        // IPv6 link-local
-  ];
-
-  for (const range of privateRanges) {
-    if (range.test(lower)) {
-      return true;
-    }
-  }
-
-  return false;
-}
 
 export async function GET(request: NextRequest) {
   // Check if proxy is enabled
@@ -97,9 +62,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid protocol' }, { status: 400 });
   }
 
-  // Block internal/private addresses (SSRF protection)
-  if (isInternalHost(parsed.hostname)) {
-    return NextResponse.json({ error: 'Blocked address' }, { status: 403 });
+  // Block internal/private addresses (SSRF protection using canonical implementation)
+  const safetyCheck = isURLSafe(url);
+  if (!safetyCheck.safe) {
+    return NextResponse.json(
+      { error: `SSRF risk: ${safetyCheck.reason}` },
+      { status: 403 }
+    );
   }
 
   // Fetch with timeout

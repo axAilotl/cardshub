@@ -3,29 +3,26 @@
  * Single source of truth for counting embedded images, greetings, etc.
  *
  * Related packages:
- * - @character-foundry/schemas: DerivedFeatures type, hasLorebook() function
+ * - @character-foundry/schemas: DerivedFeatures type, hasLorebook() function, deriveFeatures()
+ * - @character-foundry/image-utils: Image URL extraction and counting
  * - @character-foundry/lorebook: Lorebook manipulation utilities
  * - @character-foundry/loader: validateClientMetadata() for server-side validation
  */
 
-import type { CCv3CharacterBook } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/schemas';
+import { countImages } from '@character-foundry/image-utils';
+import type { CCv3CharacterBook } from '@character-foundry/character-foundry/schemas';
 
 /**
  * Count embedded images in text fields (markdown images, HTML images, data URIs)
+ *
+ * @deprecated Use countImages() from @character-foundry/image-utils instead
  */
-export function countEmbeddedImages(texts: (string | undefined)[]): number {
+export function countEmbeddedImages(texts: (string | undefined | null)[]): number {
   let count = 0;
-  const patterns = [
-    /!\[.*?\]\(.*?\)/g,                              // Markdown images
-    /<img[^>]+src=["'][^"']+["'][^>]*>/gi,          // HTML images
-    /data:image\/[^;]+;base64,[a-zA-Z0-9+/=]+/g,   // Data URIs
-  ];
   for (const text of texts) {
     if (!text) continue;
-    for (const pattern of patterns) {
-      const matches = text.match(pattern);
-      if (matches) count += matches.length;
-    }
+    count += countImages(text);
   }
   return count;
 }
@@ -50,32 +47,25 @@ export interface CardMetadataCounts {
 }
 
 export function extractCardMetadata(data: {
-  description?: string;
-  first_mes?: string;
-  alternate_greetings?: string[];
-  mes_example?: string;
-  creator_notes?: string;
+  description?: string | null;
+  first_mes?: string | null;
+  alternate_greetings?: (string | null)[] | null;
+  mes_example?: string | null;
+  creator_notes?: string | null;
   character_book?: CCv3CharacterBook | null;
+  extensions?: Record<string, unknown>;
 }): CardMetadataCounts {
-  const embeddedImages = countEmbeddedImages([
-    data.description,
-    data.first_mes,
-    ...(data.alternate_greetings || []),
-    data.mes_example,
-    data.creator_notes || '',
-  ]);
+  // Use canonical deriveFeatures() from @character-foundry/schemas
+  const features = deriveFeatures(data as any);
 
-  const alternateGreetingsCount = data.alternate_greetings?.length || 0;
-  const lorebookEntriesCount = data.character_book?.entries?.length ?? 0;
-
+  // Return subset matching CardMetadataCounts interface
   return {
-    hasAlternateGreetings: alternateGreetingsCount > 0,
-    alternateGreetingsCount,
-    // Total = first message + alternates
-    totalGreetingsCount: alternateGreetingsCount + 1,
-    hasLorebook: lorebookEntriesCount > 0,
-    lorebookEntriesCount,
-    hasEmbeddedImages: embeddedImages > 0,
-    embeddedImagesCount: embeddedImages,
+    hasAlternateGreetings: features.hasAlternateGreetings,
+    alternateGreetingsCount: features.alternateGreetingsCount,
+    totalGreetingsCount: features.totalGreetingsCount,
+    hasLorebook: features.hasLorebook,
+    lorebookEntriesCount: features.lorebookEntriesCount,
+    hasEmbeddedImages: features.hasEmbeddedImages,
+    embeddedImagesCount: features.embeddedImagesCount,
   };
 }

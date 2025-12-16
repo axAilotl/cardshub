@@ -18,7 +18,8 @@ export function NotesSection({ creatorNotes, isNsfw }: NotesSectionProps) {
   const { settings } = useSettings();
   const shouldBlur = settings.blurNsfwContent && isNsfw;
 
-  const hasHtmlContent = creatorNotes && /<[^>]+>/.test(creatorNotes);
+  // Only detect actual HTML tags, not <url> or <username>
+  const hasHtmlContent = creatorNotes && /<(p|div|span|br|b|i|u|strong|em|a|img|ul|ol|li|h[1-6]|blockquote|code|pre|hr|table|thead|tbody|tr|th|td)[>\s]/i.test(creatorNotes);
   const hasMarkdownImages = creatorNotes && /!\[[^\]]*\]\([^)]+\)/.test(creatorNotes);
 
   // Process content: if has HTML, convert any markdown images to HTML too

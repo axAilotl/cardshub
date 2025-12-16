@@ -34,12 +34,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
 import { getR2 } from '@/lib/cloudflare/env';
-import { createCard, checkBlockedTags } from '@/lib/db/cards';
+import { createCard, checkBlockedTags, computeContentHash } from '@/lib/db/cards';
 import { processThumbnail } from '@/lib/image/process';
 import { generateId, generateSlug } from '@/lib/utils';
 import { isCloudflareRuntime } from '@/lib/db';
 import { getPublicUrl } from '@/lib/storage';
 import { cacheDeleteByPrefix, CACHE_PREFIX } from '@/lib/cache/kv-cache';
+import { parseCard } from '@character-foundry/character-foundry/loader';
+import { toUint8Array } from '@character-foundry/character-foundry/core';
+import { countCardTokens } from '@/lib/client/tokenizer';
+import { extractCardMetadata } from '@/lib/card-metadata';
 
 // Token counts schema
 const TokensSchema = z.object({
@@ -126,6 +130,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if uploads are enabled
+    const { isUploadsEnabled } = await import('@/lib/db/settings');
+    const uploadsAllowed = await isUploadsEnabled();
+    if (!uploadsAllowed) {
+      return NextResponse.json(
+        { error: 'Card uploads are currently disabled' },
+        { status: 403 }
+      );
+    }
+
     // Get R2 binding
     const r2 = await getR2();
     if (!r2) {
@@ -168,6 +182,71 @@ export async function POST(request: NextRequest) {
     const permanentOriginalKey = `cards/${cardId}${ext}`;
     await moveR2Object(r2, files.original.r2Key, permanentOriginalKey);
     const storageUrl = `r2://${permanentOriginalKey}`;
+
+    // SECURITY: Re-parse and validate all metadata server-side
+    // Never trust client-provided tokens, contentHash, or metadata flags
+    console.log('[ConfirmUpload] Re-parsing card for server-side validation');
+
+    // Download the file we just moved
+    const serverOriginal = await r2.get(permanentOriginalKey);
+    if (!serverOriginal) {
+      // Clean up uploaded files and fail
+      await r2.delete(permanentOriginalKey);
+      if (files.icon) await r2.delete(files.icon.r2Key);
+      return NextResponse.json(
+        { error: 'Failed to retrieve uploaded file for validation' },
+        { status: 500 }
+      );
+    }
+
+    const serverBuffer = Buffer.from(await serverOriginal.arrayBuffer());
+    const serverUint8 = toUint8Array(serverBuffer);
+
+    // Parse card using character-foundry loader
+    let serverParsed;
+    try {
+      serverParsed = parseCard(serverUint8, { extractAssets: false }); // Assets already handled
+    } catch (parseError) {
+      // Clean up uploaded files
+      await r2.delete(permanentOriginalKey);
+      if (files.icon) await r2.delete(files.icon.r2Key);
+      return NextResponse.json(
+        { error: `Invalid card format: ${parseError instanceof Error ? parseError.message : 'parse failed'}` },
+        { status: 400 }
+      );
+    }
+
+    const serverCardData = serverParsed.card.data;
+
+    // Compute server-side values
+    const serverContentHash = computeContentHash(serverBuffer);
+    const serverTokens = countCardTokens(serverCardData);
+    const serverMetadata = extractCardMetadata(serverCardData);
+
+    // Log any mismatches (for monitoring)
+    if (serverContentHash !== metadata.contentHash) {
+      console.warn(`[ConfirmUpload] contentHash mismatch: client=${metadata.contentHash} server=${serverContentHash}`);
+    }
+    if (serverTokens.total !== metadata.tokens.total) {
+      console.warn(`[ConfirmUpload] tokens mismatch: client=${metadata.tokens.total} server=${serverTokens.total}`);
+    }
+
+    // Replace client-provided metadata with server-computed values
+    const validatedMetadata = {
+      ...metadata,
+      contentHash: serverContentHash,  // ✅ Server-computed
+      tokens: serverTokens,              // ✅ Server-computed
+      metadata: {
+        hasAlternateGreetings: serverMetadata.hasAlternateGreetings,  // ✅ Server-computed
+        alternateGreetingsCount: serverMetadata.alternateGreetingsCount,
+        hasLorebook: serverMetadata.hasLorebook,
+        lorebookEntriesCount: serverMetadata.lorebookEntriesCount,
+        hasEmbeddedImages: serverMetadata.hasEmbeddedImages,
+        embeddedImagesCount: serverMetadata.embeddedImagesCount,
+      },
+    };
+
+    // Use validatedMetadata for the rest of the flow (replaces client metadata)
 
     // Process icon if provided
     let imagePath: string | null = null;
@@ -252,7 +331,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Rewrite internal asset URLs in cardData
-    let processedCardData = metadata.cardData;
+    let processedCardData = validatedMetadata.cardData;
     if (assetUrlMapping.size > 0) {
       for (const [originalUrl, newUrl] of assetUrlMapping) {
         // Escape special regex characters in the URL
@@ -263,7 +342,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate tags
-    const allTags = [...new Set(metadata.tags)];
+    const allTags = [...new Set(validatedMetadata.tags)];
     const allTagSlugs = allTags.map(tag =>
       tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     );
@@ -289,25 +368,25 @@ export async function POST(request: NextRequest) {
     const { cardId: createdCardId, versionId } = await createCard({
       id: cardId,
       slug,
-      name: metadata.name,
-      description: metadata.description || null,
-      creator: metadata.creator || null,
-      creatorNotes: metadata.creatorNotes || null,
+      name: validatedMetadata.name,
+      description: validatedMetadata.description || null,
+      creator: validatedMetadata.creator || null,
+      creatorNotes: validatedMetadata.creatorNotes || null,
       uploaderId: session.user.id,
       visibility,
       tagSlugs: allTags,
       version: {
         storageUrl,
-        contentHash: metadata.contentHash,
-        specVersion: metadata.specVersion,
-        sourceFormat: metadata.sourceFormat,
-        tokens: metadata.tokens,
-        hasAltGreetings: metadata.metadata.hasAlternateGreetings,
-        altGreetingsCount: metadata.metadata.alternateGreetingsCount,
-        hasLorebook: metadata.metadata.hasLorebook,
-        lorebookEntriesCount: metadata.metadata.lorebookEntriesCount,
-        hasEmbeddedImages: metadata.metadata.hasEmbeddedImages,
-        embeddedImagesCount: metadata.metadata.embeddedImagesCount,
+        contentHash: validatedMetadata.contentHash,
+        specVersion: validatedMetadata.specVersion,
+        sourceFormat: validatedMetadata.sourceFormat,
+        tokens: validatedMetadata.tokens,
+        hasAltGreetings: validatedMetadata.metadata.hasAlternateGreetings,
+        altGreetingsCount: validatedMetadata.metadata.alternateGreetingsCount,
+        hasLorebook: validatedMetadata.metadata.hasLorebook,
+        lorebookEntriesCount: validatedMetadata.metadata.lorebookEntriesCount,
+        hasEmbeddedImages: validatedMetadata.metadata.hasEmbeddedImages,
+        embeddedImagesCount: validatedMetadata.metadata.embeddedImagesCount,
         hasAssets: savedAssetsData.length > 0,
         assetsCount: savedAssetsData.length,
         savedAssets: savedAssetsData.length > 0 ? JSON.stringify(savedAssetsData) : null,
@@ -329,7 +408,7 @@ export async function POST(request: NextRequest) {
       data: {
         id: createdCardId,
         slug,
-        name: metadata.name,
+        name: validatedMetadata.name,
         versionId,
       },
     });

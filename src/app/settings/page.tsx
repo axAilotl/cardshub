@@ -7,6 +7,9 @@
  * Each panel is a self-contained component that manages its own state.
  */
 
+// Disable static generation for this page (requires auth context)
+export const dynamic = 'force-dynamic';
+
 import Link from 'next/link';
 import { AppShell } from '@/components/layout';
 import { useSettings } from '@/lib/settings';

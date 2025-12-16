@@ -27,8 +27,8 @@ import { getR2 } from '@/lib/cloudflare/env';
 import { getDatabase } from '@/lib/db/async-db';
 import { isCloudflareRuntime } from '@/lib/db';
 import { getPublicUrl, store } from '@/lib/storage';
-import { parseCard } from '@character-foundry/loader';
-import { toUint8Array } from '@character-foundry/core';
+import { parseCard } from '@character-foundry/character-foundry/loader';
+import { toUint8Array } from '@character-foundry/character-foundry/core';
 
 const CompleteUploadSchema = z.object({
   uploadId: z.string().min(1),

@@ -875,8 +875,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         run: npm run test:run -- --coverage
@@ -900,8 +898,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run security tests
         run: npm run test:run -- tests/security/

@@ -27,14 +27,14 @@ import {
   // Binary utilities
   toUint8Array,
   fromString,
-} from '@character-foundry/core';
+} from '@character-foundry/character-foundry/core';
 
 import {
   parseCard,
   detectFormat,
   type ParseResult,
   type ContainerFormat,
-} from '@character-foundry/loader';
+} from '@character-foundry/character-foundry/loader';
 
 import {
   isFederationEnabled,
@@ -46,14 +46,14 @@ import {
   buildSigningString,
   calculateDigest,
   type ParsedSignature,
-} from '@character-foundry/federation';
+} from '@character-foundry/character-foundry/federation';
 
 import {
   // Token counting (Issue #11 - now implemented)
   countCardTokens,
   countText,
   type CardTokenCounts,
-} from '@character-foundry/tokenizers';
+} from '@character-foundry/character-foundry/tokenizers';
 
 describe('@character-foundry/core - Error Types', () => {
   it('should create FoundryError with code', () => {
@@ -420,9 +420,9 @@ describe('@character-foundry/federation - HTTP Signatures (Issue #12)', () => {
 describe('Package Versions', () => {
   it('should have security-tagged versions installed', async () => {
     // This test verifies the packages are actually installed
-    const coreIndex = await import('@character-foundry/core');
-    const loaderIndex = await import('@character-foundry/loader');
-    const fedIndex = await import('@character-foundry/federation');
+    const coreIndex = await import('@character-foundry/character-foundry/core');
+    const loaderIndex = await import('@character-foundry/character-foundry/loader');
+    const fedIndex = await import('@character-foundry/character-foundry/federation');
 
     // These should exist in security packages
     expect(typeof coreIndex.generateUUID).toBe('function');

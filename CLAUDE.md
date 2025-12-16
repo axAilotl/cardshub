@@ -69,13 +69,13 @@ CardsHub is a platform for sharing, discovering, and managing AI character cards
 - **Validation**: Zod schemas in `src/lib/validations/` for all API inputs
 - **Logging**: Winston (Node.js) / Console (Cloudflare Workers) with structured output
 - **Rate Limiting**: Sliding window algorithm with per-endpoint configs in `src/lib/rate-limit.ts`
-- **Testing**: Vitest with 185 tests (7 test files) covering validation schemas, rate limiting, and utilities
+- **Testing**: Vitest with 289 tests (14 test files) covering validation schemas, rate limiting, security, card parsing, and utilities
 - **Tokenizer**: tiktoken (cl100k_base encoding for GPT-4 compatible counts)
 - **Styling**: Tailwind CSS v4 with CSS-in-JS theme configuration
 - **Storage**: Abstracted with URL schemes (`file://`, `r2://`, future: `s3://`, `ipfs://`)
 - **Runtime**: Node.js 22 (local), Cloudflare Workers (production)
 - **Auth**: Cookie-based sessions with bcryptjs password hashing (work factor 12)
-- **Card Parsing**: `@character-foundry/*` packages from GitHub Packages (loader, png, schemas, core)
+- **Card Parsing**: `@character-foundry/*` packages (schemas, image-utils, character-foundry meta-package)
 
 ## Commands
 
@@ -165,12 +165,14 @@ src/
 │   │   ├── file.ts         # Local filesystem driver
 │   │   └── r2.ts           # Cloudflare R2 driver
 │   ├── card-parser/        # Token counting and metadata extraction
-│   ├── image/              # Thumbnail generation
+│   ├── image/              # Thumbnail generation and embedded image processing
+│   ├── security/           # CSS sanitization, SSRF protection utilities
 │   ├── validations/        # Zod schemas for API input validation
 │   │   └── __tests__/      # Validation test files
-│   ├── __tests__/          # Core lib test files (rate-limit, etc.)
+│   ├── __tests__/          # Core lib test files (rate-limit, card-metadata, etc.)
 │   ├── logger.ts           # Winston logging infrastructure
 │   ├── rate-limit.ts       # Sliding window rate limiter with endpoint configs
+│   ├── card-metadata.ts    # Canonical feature extraction (wraps @character-foundry/schemas)
 │   └── utils/              # cn(), generateSlug(), generateId()
 └── types/                  # TypeScript interfaces for cards, users, API
 ```
@@ -224,56 +226,55 @@ blocked     → admin removed, only admins see
 Note: NSFW content is handled via tags (e.g., "nsfw" tag) and the existing blur filter in the UI, NOT via visibility states.
 
 ### Character Card Parsing
-Uses `@character-foundry/*` packages from GitHub Packages registry:
+Uses `@character-foundry/*` packages from the character-foundry monorepo:
 
-**Core Packages:**
-- `@character-foundry/loader` (0.1.8) - Universal card loader (detects format, parses all types)
-- `@character-foundry/schemas` (0.2.0) - CCv2/CCv3 TypeScript types with **Zod validation schemas**
-- `@character-foundry/core` (0.1.1) - Shared utilities (toUint8Array, etc.)
-- `@character-foundry/tokenizers` (0.1.1) - Token counting
+**Primary Packages (via file: references to parent monorepo):**
+- `@character-foundry/schemas` (0.2.2) - CCv2/CCv3 TypeScript types, Zod validation, and **`deriveFeatures()`** for feature extraction
+- `@character-foundry/image-utils` (0.1.0) - Image URL extraction, counting, and **SSRF protection**
 
-**Format Packages:**
-- `@character-foundry/png` (0.0.5) - PNG tEXt chunk read/write
-- `@character-foundry/charx` (0.0.5) - CharX package parsing
-- `@character-foundry/voxta` (0.1.10) - Voxta package parsing
+**Meta Package (via npm):**
+- `@character-foundry/character-foundry` (0.1.5) - Includes loader, png, charx, voxta, and other packages
 
-**NEW Packages:**
-- `@character-foundry/lorebook` (0.0.2) - Lorebook parsing, extraction, and insertion utilities
-- `@character-foundry/normalizer` (0.1.2) - Convert between CCv2, CCv3, and NormalizedCard formats
-- `@character-foundry/exporter` (0.1.2) - Export to PNG, CharX, or Voxta formats
-- `@character-foundry/media` (0.1.1) - Image processing utilities for character cards
-- `@character-foundry/federation` (0.2.0) - Federation layer for syncing via ActivityPub
-- `@character-foundry/app-framework` (0.2.1) - Schema-driven UI framework with extension registry
-
-**Meta Package:**
-- `@character-foundry/character-foundry` (0.1.1) - Includes all packages above
-
-**ESM Configuration**: These packages are ESM-only. For Next.js server-side compatibility, all `@character-foundry/*` packages must be listed in `serverExternalPackages` in `next.config.ts`.
-
-**New in schemas 0.2.0 - Zod Validation:**
+**Canonical Feature Extraction:**
 ```typescript
-import { CCv2Schema, CCv3Schema, LorebookSchema } from '@character-foundry/schemas';
+import { deriveFeatures } from '@character-foundry/schemas';
 
-// Validate and parse card data with full type inference
-const result = CCv3Schema.safeParse(cardData);
-if (result.success) {
-  const card = result.data; // Fully typed CCv3 card
+// Extract all card features with one call
+const features = deriveFeatures(cardData);
+// Returns: hasLorebook, lorebookEntriesCount, hasAlternateGreetings,
+//          alternateGreetingsCount, totalGreetingsCount, hasEmbeddedImages,
+//          embeddedImagesCount, hasRisuExtensions, hasDepthPrompt, etc.
+```
+
+**Canonical Image Utilities:**
+```typescript
+import { countImages, extractImageUrls, isURLSafe } from '@character-foundry/image-utils';
+
+// Count embedded images in text
+const count = countImages(creatorNotes);
+
+// Extract image URLs (markdown, HTML, data URIs)
+const images = extractImageUrls(text);
+
+// SSRF protection for URL validation
+if (isURLSafe(url)) {
+  // Safe to fetch
 }
 ```
 
-Features:
+**ESM Configuration**: These packages are ESM-only. For Next.js server-side compatibility, all `@character-foundry/*` packages must be listed in `serverExternalPackages` in `next.config.ts`.
+
+**Features:**
 - PNG tEXt chunk extraction (base64-encoded JSON in "chara" field)
 - CCv2 spec parsing (`chara_card_v2`)
 - CCv3 spec parsing (`chara_card_v3`) with assets support
 - CharX package extraction (.charx ZIP files with card.json + assets/)
 - Voxta package extraction (.voxpkg ZIP files)
 - Token counting using tiktoken
-- Metadata detection (alt greetings, lorebook, embedded images)
+- Metadata detection via canonical `deriveFeatures()`
 - Handles malformed JSON with trailing garbage data
 - Binary asset extraction with `parseFromBufferWithAssets()`
-- **NEW:** Lorebook parsing and manipulation with `@character-foundry/lorebook`
-- **NEW:** Card format normalization with `@character-foundry/normalizer`
-- **NEW:** Card export to multiple formats with `@character-foundry/exporter`
+- SSRF-safe image URL extraction via canonical `@character-foundry/image-utils`
 
 ### Storage Abstraction
 The `lib/storage/` module provides:
@@ -547,32 +548,13 @@ return transformed.response();
 
 Without this, thumbnails fall back to serving original PNGs.
 
-## GitHub Packages Setup
+## @character-foundry Packages
 
-The `@character-foundry/*` packages are hosted on GitHub Packages (not npm). This requires:
+This project uses a mix of package sources:
+- **Primary packages** (`@character-foundry/schemas`, `@character-foundry/image-utils`): Linked via `file:` references to the parent monorepo for development
+- **Meta package** (`@character-foundry/character-foundry`): Published to npm registry
 
-### Local Development
-1. `.npmrc` file in repo root (already committed):
-   ```
-   @character-foundry:registry=https://npm.pkg.github.com
-   //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-   ```
-
-2. Set `GITHUB_TOKEN` environment variable with a GitHub PAT that has `read:packages` scope
-
-3. **CRITICAL**: If you have a local clone of `character-foundry` at `../../card-ecosystem/character-foundry/`, npm will link to it instead of fetching from GitHub Packages. This creates a broken `package-lock.json` with local symlinks like:
-   ```json
-   "resolved": "../../card-ecosystem/character-foundry/packages/loader",
-   "link": true
-   ```
-
-   **To fix**: Temporarily rename/move the local `character-foundry` directory, delete `node_modules` and `package-lock.json`, then run `npm install` with `GITHUB_TOKEN` set. This forces npm to fetch from GitHub Packages and creates a proper lock file with URLs like:
-   ```json
-   "resolved": "https://npm.pkg.github.com/download/@character-foundry/loader/0.1.0/..."
-   ```
-
-### Cloudflare Build
-Set `GITHUB_TOKEN` in Cloudflare Dashboard → Workers & Pages → cardshub → Settings → Environment Variables (as a Secret for build-time).
+For development, ensure the parent `character-foundry` monorepo is available at `../character-foundry/`. For production, packages are bundled during build.
 
 ## D1 Database Migrations
 
@@ -651,8 +633,7 @@ Full documentation: `docs/CSS_CUSTOMIZATION.md`
 3. **Rate Limiting**: In-memory only, doesn't persist across Workers - use Cloudflare KV for production
 4. **Thumbnails on CF**: Requires Image Transformations enabled in dashboard; falls back to original if disabled
 5. **Logging on CF**: Winston not available - uses simple console logger on Workers
-6. **Package Lock Local Links**: If `package-lock.json` has local symlinks instead of GitHub URLs, Cloudflare builds will fail (see GitHub Packages Setup above)
-7. **D1 Schema Sync**: Schema changes in `schema.sql` are NOT auto-applied to D1 - must run migrations manually (see above)
+6. **D1 Schema Sync**: Schema changes in `schema.sql` are NOT auto-applied to D1 - must run migrations manually (see above)
 
 ## Common Mistakes (READ THIS)
 
@@ -673,30 +654,24 @@ npx wrangler d1 execute cardshub-db --remote --command "ALTER TABLE cards ADD CO
 **Fix:** Use inline calculation instead: `ORDER BY (upvotes + downloads_count * 0.5) DESC`
 **Prevention:** Always use inline calculations in queries, generated columns are just for local convenience
 
-### 3. New @character-foundry package not accessible in CI
-**Symptom:** CI fails with `403 Forbidden` or `permission_denied: read_package`
-**Cause:** New package published to GitHub Packages with `internal` visibility or not linked to source repo
-**Fix:** Go to package settings → Change visibility to `public` AND link to source repository
-**Prevention:** When publishing new packages, always set visibility to `public` and link to `character-foundry/character-foundry` repo
-
-### 4. Multiple useEffects fighting each other
+### 3. Multiple useEffects fighting each other
 **Symptom:** State resets unexpectedly, clicking something triggers wrong behavior
 **Cause:** Multiple useEffects with overlapping concerns (e.g., one resets page to 1, another fetches current page)
 **Fix:** Consolidate into single effect with proper dependency tracking using refs
 **Prevention:** One source of truth for related state changes; use refs to track "did this actually change"
 
-### 5. Forgetting to deploy after pushing
+### 4. Forgetting to deploy after pushing
 **Symptom:** "I pushed but production still broken"
 **Cause:** GitHub push doesn't auto-deploy to Cloudflare
 **Fix:** `npm run cf:build && npm run cf:deploy`
 **Prevention:** CI only runs lint/tests, deployment is manual
 
-### 6. Browser crashes with `createRequire is not a function`
+### 5. Browser crashes with `createRequire is not a function`
 **Symptom:** Upload page or any page using `@character-foundry/*` packages crashes with `(0, a.createRequire) is not a function`
 **Cause:** Upstream packages bundled fflate's Node.js code instead of keeping it external. The Node.js version uses `createRequire` from the `module` package which doesn't exist in browsers.
 **Fix:** Update packages to fixed versions:
 ```bash
-GITHUB_TOKEN=xxx npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
+npm update @character-foundry/core @character-foundry/png @character-foundry/charx @character-foundry/voxta
 ```
 **Verification:** `grep -l "createRequire" node_modules/@character-foundry/*/dist/*` should return nothing
 **Prevention:** Fixed in core@0.1.1, png@0.0.5, charx@0.0.5, voxta@0.1.10+ (fflate is now external)

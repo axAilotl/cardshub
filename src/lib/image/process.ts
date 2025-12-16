@@ -10,6 +10,7 @@
 import { isCloudflareRuntime } from '@/lib/db';
 import { getR2, getImages } from '@/lib/cloudflare/env';
 import { isImageCacheEnabled } from '@/lib/db/settings';
+import { extractImageUrls as extractImageUrlsCanonical, isURLSafe } from '@character-foundry/image-utils';
 import crypto from 'crypto';
 
 // Quality settings
@@ -45,58 +46,12 @@ function hashContent(data: Uint8Array): string {
 /**
  * Extract embedded image URLs from text content
  * Handles markdown images, HTML images (quoted and unquoted), CSS url(), and data URIs
+ *
+ * Uses canonical implementation from @character-foundry/image-utils
  */
 export function extractImageUrls(text: string): string[] {
-  const urls: string[] = [];
-
-  // Markdown images: ![alt](url)
-  const markdownPattern = /!\[[^\]]*\]\(([^)]+)\)/g;
-  let match;
-  while ((match = markdownPattern.exec(text)) !== null) {
-    urls.push(match[1].trim());
-  }
-
-  // HTML images with quoted src: <img src="url"> or <img src='url'>
-  const htmlQuotedPattern = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
-  while ((match = htmlQuotedPattern.exec(text)) !== null) {
-    urls.push(match[1].trim());
-  }
-
-  // HTML images with unquoted src: <img src=url ...> (URL ends at space or >)
-  const htmlUnquotedPattern = /<img[^>]+src=([^\s"'>]+)[^>]*>/gi;
-  while ((match = htmlUnquotedPattern.exec(text)) !== null) {
-    // Skip if it starts with a quote (already handled above)
-    const url = match[1].trim();
-    if (!url.startsWith('"') && !url.startsWith("'")) {
-      urls.push(url);
-    }
-  }
-
-  // CSS url() function: url(url), url("url"), url('url')
-  // Common in background-image, background, content, etc.
-  const cssUrlPattern = /url\(["']?([^)"']+)["']?\)/gi;
-  while ((match = cssUrlPattern.exec(text)) !== null) {
-    const url = match[1].trim();
-    // Only include http(s) URLs, not relative paths or data URIs (handled separately)
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      urls.push(url);
-    }
-  }
-
-  // Plain image URLs in text (common image hosting domains and file extensions)
-  // This catches URLs that aren't wrapped in img tags or markdown
-  const plainUrlPattern = /(?<![("'])(https?:\/\/[^\s<>"']+\.(?:jpg|jpeg|png|gif|webp|svg|avif|bmp))(?![)"'])/gi;
-  while ((match = plainUrlPattern.exec(text)) !== null) {
-    urls.push(match[1].trim());
-  }
-
-  // Data URIs (these need to be converted too)
-  const dataUriPattern = /(data:image\/[^;]+;base64,[a-zA-Z0-9+/=]+)/g;
-  while ((match = dataUriPattern.exec(text)) !== null) {
-    urls.push(match[1]);
-  }
-
-  return [...new Set(urls)]; // Dedupe
+  const extracted = extractImageUrlsCanonical(text);
+  return extracted.map(img => img.url);
 }
 
 // Maximum image size to download (10MB)
@@ -105,44 +60,10 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 10000;
 
 /**
- * Check if a hostname is an internal/private address (SSRF protection)
- */
-function isInternalHost(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-
-  // Block localhost variants
-  if (lower === 'localhost' || lower === '127.0.0.1' || lower === '::1' || lower === '0.0.0.0') {
-    return true;
-  }
-
-  // Block AWS metadata endpoint
-  if (lower === '169.254.169.254') {
-    return true;
-  }
-
-  // Block private IP ranges
-  const privateRanges = [
-    /^10\./,                          // 10.0.0.0/8
-    /^172\.(1[6-9]|2\d|3[01])\./,     // 172.16.0.0/12
-    /^192\.168\./,                    // 192.168.0.0/16
-    /^127\./,                         // 127.0.0.0/8
-    /^169\.254\./,                    // Link-local
-    /^fc[0-9a-f]{2}:/i,              // IPv6 unique local
-    /^fe80:/i,                        // IPv6 link-local
-  ];
-
-  for (const range of privateRanges) {
-    if (range.test(lower)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
  * Download an image from a URL with SSRF protections
  * If we get a 302 redirect (often hotlink protection), retry with no Referer
+ *
+ * Uses canonical SSRF protection from @character-foundry/image-utils
  */
 async function downloadImage(url: string): Promise<Uint8Array | null> {
   try {
@@ -177,8 +98,9 @@ async function downloadImage(url: string): Promise<Uint8Array | null> {
     }
 
     // Block internal/private addresses (SSRF protection)
-    if (isInternalHost(parsed.hostname)) {
-      console.error(`[EmbeddedImages] Blocked internal address: ${parsed.hostname}`);
+    const safetyCheck = isURLSafe(url);
+    if (!safetyCheck.safe) {
+      console.error(`[EmbeddedImages] SSRF risk: ${safetyCheck.reason}`);
       return null;
     }
 

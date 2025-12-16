@@ -10,57 +10,70 @@ import {
   RATE_LIMITS,
 } from '../rate-limit';
 
+// In-memory storage for testing
+const testBuckets = new Map<string, { count: number; window_start: number; window_ms: number }>();
+
 // Mock the database module
 vi.mock('@/lib/db/async-db', () => {
-  // In-memory storage for testing
-  const buckets = new Map<string, { count: number; window_start: number; window_ms: number }>();
-
   const mockDb = {
     prepare: (sql: string) => ({
       get: async (...params: unknown[]) => {
+        // Handle the new atomic UPSERT with RETURNING for rateLimit
+        if (sql.includes('INSERT INTO rate_limit_buckets') && sql.includes('RETURNING')) {
+          const key = params[0] as string;
+          const now = params[1] as number;
+          const windowMs = params[2] as number;
+          // params[3], [4], [5], [6] are for the UPDATE CASE conditions
+
+          const existing = testBuckets.get(key);
+          if (!existing) {
+            // New bucket - count=1
+            testBuckets.set(key, { count: 1, window_start: now, window_ms: windowMs });
+            return { count: 1, window_start: now };
+          }
+
+          // Check if window expired
+          if (now > existing.window_start + existing.window_ms) {
+            // Window expired - reset to count=1
+            testBuckets.set(key, { count: 1, window_start: now, window_ms: windowMs });
+            return { count: 1, window_start: now };
+          }
+
+          // Window still valid - increment
+          existing.count++;
+          return { count: existing.count, window_start: existing.window_start };
+        }
+        // Handle checkRateLimit's SELECT query
         if (sql.includes('SELECT count, window_start FROM rate_limit_buckets')) {
           const key = params[0] as string;
-          return buckets.get(key);
+          return testBuckets.get(key);
         }
         if (sql.includes('SELECT COUNT')) {
           let totalRequests = 0;
-          for (const b of buckets.values()) totalRequests += b.count;
-          return { bucket_count: buckets.size, total_requests: totalRequests };
+          for (const b of testBuckets.values()) totalRequests += b.count;
+          return { bucket_count: testBuckets.size, total_requests: totalRequests };
         }
         return undefined;
       },
       run: async (...params: unknown[]) => {
-        if (sql.includes('INSERT INTO rate_limit_buckets')) {
-          const key = params[0] as string;
-          const window_start = params[1] as number;
-          const window_ms = params[2] as number;
-          buckets.set(key, { count: 1, window_start, window_ms });
-          return { changes: 1, lastInsertRowid: 0 };
-        }
-        if (sql.includes('UPDATE rate_limit_buckets SET count = count + 1')) {
-          const key = params[0] as string;
-          const bucket = buckets.get(key);
-          if (bucket) bucket.count++;
-          return { changes: 1, lastInsertRowid: 0 };
-        }
         if (sql.includes('DELETE FROM rate_limit_buckets WHERE key')) {
           const key = params[0] as string;
-          buckets.delete(key);
+          testBuckets.delete(key);
           return { changes: 1, lastInsertRowid: 0 };
         }
         if (sql.includes('DELETE FROM rate_limit_buckets') && !sql.includes('WHERE key')) {
           if (sql.includes('window_start + window_ms <')) {
             const now = params[0] as number;
             let deleted = 0;
-            for (const [key, bucket] of buckets.entries()) {
+            for (const [key, bucket] of testBuckets.entries()) {
               if (bucket.window_start + bucket.window_ms < now) {
-                buckets.delete(key);
+                testBuckets.delete(key);
                 deleted++;
               }
             }
             return { changes: deleted, lastInsertRowid: 0 };
           }
-          buckets.clear();
+          testBuckets.clear();
           return { changes: 0, lastInsertRowid: 0 };
         }
         return { changes: 0, lastInsertRowid: 0 };
@@ -74,14 +87,8 @@ vi.mock('@/lib/db/async-db', () => {
 
   return {
     getDatabase: async () => mockDb,
-    // Expose the buckets map for test cleanup
-    __testBuckets: buckets,
   };
 });
-
-// Get the test buckets for manual cleanup
-import { __testBuckets } from '@/lib/db/async-db';
-const testBuckets = __testBuckets as Map<string, { count: number; window_start: number; window_ms: number }>;
 
 describe('rateLimit', () => {
   beforeEach(async () => {

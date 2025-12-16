@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import DOMPurify from 'isomorphic-dompurify';
 import { AppShell } from '@/components/layout';
 import { Button, Input } from '@/components/ui';
 import { useAuth } from '@/lib/auth/context';
@@ -113,7 +114,13 @@ export default function EditProfilePage() {
               {editorMode === 'pro' ? (
                 <div
                   className="text-starlight/80 whitespace-pre-wrap"
-                  dangerouslySetInnerHTML={{ __html: effectiveBio }}
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(effectiveBio, {
+                      ALLOWED_TAGS: ['p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li', 'span', 'div'],
+                      ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+                      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'style'],
+                    })
+                  }}
                 />
               ) : (
                 <p className="text-starlight/80 whitespace-pre-wrap">

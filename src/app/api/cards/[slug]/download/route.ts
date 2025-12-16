@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCardBySlug, incrementDownloads, getCardVersionById } from '@/lib/db/cards';
 import { isCloudflareRuntime } from '@/lib/db';
 import { getR2 } from '@/lib/cloudflare/env';
-import { embedIntoPNG } from '@character-foundry/png';
-import { toUint8Array } from '@character-foundry/core';
+import { embedIntoPNG } from '@character-foundry/character-foundry/png';
+import { toUint8Array } from '@character-foundry/character-foundry/core';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
 import {
@@ -11,7 +11,7 @@ import {
   CCv3DataSchema,
   type CCv2Data,
   type CCv3Data,
-} from '@character-foundry/schemas';
+} from '@character-foundry/character-foundry/schemas';
 
 // Union schema for card data validation
 const CardDataSchema = z.union([CCv2WrappedSchema, CCv3DataSchema]);

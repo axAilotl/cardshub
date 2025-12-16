@@ -16,7 +16,7 @@ export type {
   SourceFormat as SchemaSourceFormat, // Renamed - schemas has granular format (png_v2, json_v3, etc.)
   DerivedFeatures,
   NormalizedCard,
-} from '@character-foundry/schemas';
+} from '@character-foundry/character-foundry/schemas';
 
 // Re-export Zod schemas for validation
 export {
@@ -30,7 +30,7 @@ export {
   CCv3LorebookEntrySchema,
   AssetDescriptorSchema,
   SourceFormatSchema as SchemaSourceFormatSchema, // Renamed - granular format schema
-} from '@character-foundry/schemas';
+} from '@character-foundry/character-foundry/schemas';
 
 // Re-export utility functions
 export {
@@ -43,7 +43,7 @@ export {
   zodErrorToMessage,
   createEmptyFeatures,
   createEmptyNormalizedCard,
-} from '@character-foundry/schemas';
+} from '@character-foundry/character-foundry/schemas';
 
 // Legacy type aliases for backward compatibility
 import type {
@@ -52,7 +52,7 @@ import type {
   CCv3CharacterBook,
   CCv3LorebookEntry,
   AssetDescriptor,
-} from '@character-foundry/schemas';
+} from '@character-foundry/character-foundry/schemas';
 
 // Local SourceFormat (simplified - schemas package has granular png_v2/png_v3/json_v2/json_v3)
 export type SourceFormat = 'png' | 'json' | 'charx' | 'voxta';

@@ -1,6 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
 import { getSession } from '@/lib/auth';
+import { sanitizeCss, validateNoUiBreaking } from '@/lib/security/css-sanitizer';
+
+/**
+ * Sanitize CSS using comprehensive security checks.
+ * Returns sanitized CSS string or null if invalid.
+ */
+function sanitizeProfileCSS(css: string): string | null {
+  // Use the shared sanitizer with profile-specific settings
+  const sanitized = sanitizeCss(css, {
+    scope: '[data-profile]',
+    maxSelectors: 500,
+    maxNestingDepth: 10,
+    allowAnimations: true,
+    allowMediaQueries: true,
+  });
+
+  if (!sanitized) return null;
+
+  // Additional validation: no UI-breaking patterns
+  const validation = validateNoUiBreaking(sanitized);
+  if (!validation.valid) {
+    console.warn('CSS validation failed:', validation.reason);
+    return null;
+  }
+
+  return sanitized;
+}
 
 /**
  * GET /api/users/me
@@ -138,27 +165,21 @@ export async function PUT(request: NextRequest) {
           { status: 400 }
         );
       }
-      // Basic CSS sanitization - remove potentially dangerous patterns
+
+      // Comprehensive CSS sanitization with scoping and validation
+      let sanitizedCss: string | null = null;
       if (profileCss) {
-        const dangerousPatterns = [
-          /javascript:/gi,
-          /expression\s*\(/gi,
-          /url\s*\(\s*["']?\s*data:/gi,
-          /@import/gi,
-          /behavior\s*:/gi,
-          /-moz-binding/gi,
-        ];
-        for (const pattern of dangerousPatterns) {
-          if (pattern.test(profileCss)) {
-            return NextResponse.json(
-              { error: 'Invalid CSS: potentially dangerous patterns detected' },
-              { status: 400 }
-            );
-          }
+        sanitizedCss = sanitizeProfileCSS(profileCss);
+        if (sanitizedCss === null) {
+          return NextResponse.json(
+            { error: 'Invalid CSS: security validation failed' },
+            { status: 400 }
+          );
         }
       }
+
       updates.push('profile_css = ?');
-      params.push(profileCss || null);
+      params.push(sanitizedCss);
     }
 
     if (updates.length === 0) {

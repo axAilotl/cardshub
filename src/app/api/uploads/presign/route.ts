@@ -63,6 +63,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if uploads are enabled
+    const { isUploadsEnabled } = await import('@/lib/db/settings');
+    const uploadsAllowed = await isUploadsEnabled();
+    if (!uploadsAllowed) {
+      return NextResponse.json(
+        { error: 'Card uploads are currently disabled' },
+        { status: 403 }
+      );
+    }
+
     // Check if presigned URLs are available
     const available = await isPresignAvailable();
     if (!available) {

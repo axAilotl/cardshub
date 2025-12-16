@@ -9,7 +9,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { AutoForm } from '@character-foundry/app-framework';
+import { AutoForm } from '@character-foundry/character-foundry/app-framework';
 import { useAuth } from '@/lib/auth/context';
 import { settingsRegistry, widgetRegistry } from '@/lib/settings/registry';
 import { ProfileSchema, type Profile } from '@/lib/settings/schemas';
