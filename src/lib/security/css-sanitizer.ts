@@ -1,5 +1,4 @@
 import DOMPurify from 'isomorphic-dompurify';
-import { isCloudflareRuntime } from '@/lib/db';
 
 export interface CssSanitizeOptions {
   /** Scope CSS to a specific selector (e.g., '[data-profile]') */
@@ -14,65 +13,24 @@ export interface CssSanitizeOptions {
   maxNestingDepth?: number;
 }
 
-// Dynamic import for Node.js-only sanitizer
-// Use string template to prevent bundler from following this import
-async function getNodeSanitizer() {
-  // NEVER try to import css-tree on Cloudflare - always use fallback
-  if (isCloudflareRuntime()) return null;
-
-  // Also skip if we detect Worker environment (no 'fs' module available)
-  if (typeof process === 'undefined' || !process.versions?.node) {
-    return null;
-  }
-
-  try {
-    const sanitizerModule = await import(/* @vite-ignore */ `./css-sanitizer-node`);
-    return sanitizerModule.sanitizeCssWithTree;
-  } catch (err) {
-    console.error('Failed to load Node.js CSS sanitizer:', err);
-    return null;
-  }
-}
-
 /**
- * Sanitize CSS string using AST parsing + DOMPurify
+ * Sanitize CSS string using regex-based whitelist/blacklist approach
  * Returns sanitized CSS or null if invalid
  */
 export async function sanitizeCss(css: string, options: CssSanitizeOptions = {}): Promise<string | null> {
-
   // Preserve existing behavior for empty input
   if (css === '') return '';
 
   // Preserve whitespace-only CSS (treat as valid, but no-op)
   if (css.trim() === '') return css;
 
-  // Try to use Node.js sanitizer with css-tree
-  const nodeSanitizer = await getNodeSanitizer();
-  if (nodeSanitizer) {
-    try {
-      const sanitized = await nodeSanitizer(css, options);
-      if (!sanitized) return null;
-
-      // DOMPurify second pass
-      if (typeof (DOMPurify as any).sanitizeCSS === 'function') {
-        return (DOMPurify as any).sanitizeCSS(sanitized);
-      }
-
-      return sanitized || ' ';
-    } catch (err) {
-      console.error('Node.js CSS sanitization failed:', err);
-      return null;
-    }
-  }
-
-  // Fallback to simple sanitizer on Workers
-  return sanitizeCssFallback(css, options);
+  return sanitizeCssImpl(css, options);
 }
 
 /**
- * Fallback CSS sanitizer for Cloudflare Workers (NEVER uses css-tree)
+ * CSS sanitizer using regex-based whitelist/blacklist (works everywhere)
  */
-function sanitizeCssFallback(css: string, options: CssSanitizeOptions = {}): string | null {
+function sanitizeCssImpl(css: string, options: CssSanitizeOptions = {}): string | null {
   const { scope, maxNestingDepth = 10 } = options;
 
   /** Dangerous properties - NEVER allow these */
