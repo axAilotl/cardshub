@@ -5,7 +5,6 @@ import {
   CardUploadFormSchema,
   CardFileSchema,
   SUPPORTED_EXTENSIONS,
-  MAX_FILE_SIZE,
 } from '../cards';
 
 describe('CardFiltersSchema', () => {
@@ -316,21 +315,7 @@ describe('CardFileSchema', () => {
     expect(CardFileSchema.safeParse({ name: 'file.zip', size: 1024 }).success).toBe(false);
   });
 
-  it('rejects files over 50MB', () => {
-    const result = CardFileSchema.safeParse({
-      name: 'large.png',
-      size: MAX_FILE_SIZE + 1,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts files at exactly 50MB', () => {
-    const result = CardFileSchema.safeParse({
-      name: 'exact.png',
-      size: MAX_FILE_SIZE,
-    });
-    expect(result.success).toBe(true);
-  });
+  // Note: MAX_FILE_SIZE validation removed - Cloudflare rejects >50MB FormData uploads naturally
 });
 
 describe('Constants', () => {
@@ -340,9 +325,5 @@ describe('Constants', () => {
     expect(SUPPORTED_EXTENSIONS).toContain('.charx');
     expect(SUPPORTED_EXTENSIONS).toContain('.voxpkg');
     expect(SUPPORTED_EXTENSIONS.length).toBe(4);
-  });
-
-  it('has correct max file size (50MB)', () => {
-    expect(MAX_FILE_SIZE).toBe(50 * 1024 * 1024);
   });
 });

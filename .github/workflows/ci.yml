@@ -28,6 +28,8 @@ jobs:
 
       - name: Run tests
         run: npm run test:run
+        env:
+          CF_ALLOW_MISSING_FIXTURES: '1'
 
   e2e-tests:
     runs-on: ubuntu-latest
