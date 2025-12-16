@@ -346,6 +346,17 @@ export async function createCollection(input: CreateCollectionInput): Promise<st
     now
   );
 
+  // Add to FTS index
+  await db.prepare(`
+    INSERT INTO collections_fts (collection_id, name, description, creator)
+    VALUES (?, ?, ?, ?)
+  `).run(
+    input.id,
+    input.name,
+    input.description || '',
+    input.creator || ''
+  );
+
   return input.id;
 }
 
@@ -416,6 +427,25 @@ export async function updateCollection(
   await db.prepare(`
     UPDATE collections SET ${setClauses.join(', ')} WHERE id = ?
   `).run(...params);
+
+  // Update FTS index if searchable fields changed
+  if (updates.name !== undefined || updates.description !== undefined || updates.creator !== undefined) {
+    // Get current values for fields that weren't updated
+    const current = await db.prepare(`
+      SELECT name, description, creator FROM collections WHERE id = ?
+    `).get(id) as { name: string; description: string | null; creator: string | null };
+
+    await db.prepare(`
+      UPDATE collections_fts
+      SET name = ?, description = ?, creator = ?
+      WHERE collection_id = ?
+    `).run(
+      updates.name ?? current.name,
+      updates.description ?? current.description ?? '',
+      updates.creator ?? current.creator ?? '',
+      id
+    );
+  }
 }
 
 /**
@@ -445,6 +475,9 @@ export async function deleteCollection(id: string): Promise<void> {
   await db.prepare(`
     UPDATE cards SET collection_id = NULL, collection_item_id = NULL WHERE collection_id = ?
   `).run(id);
+
+  // Delete from FTS index
+  await db.prepare(`DELETE FROM collections_fts WHERE collection_id = ?`).run(id);
 
   // Then delete the collection
   await db.prepare(`DELETE FROM collections WHERE id = ?`).run(id);

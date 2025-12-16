@@ -213,7 +213,13 @@ export function CardHero({ card, permanentTokens, onDownload }: CardHeroProps) {
               />
             ) : (
               <div className="w-full h-full bg-cosmic-teal/50 flex items-center justify-center">
-                <span className="text-6xl text-starlight/30">?</span>
+                <Image
+                  src="/ca-logo.svg"
+                  alt="Character Archives"
+                  width={160}
+                  height={160}
+                  className="opacity-40"
+                />
               </div>
             )}
           </div>

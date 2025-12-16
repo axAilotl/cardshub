@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
       ? `col.visibility IN ('public', 'nsfw_only')`
       : `col.visibility = 'public'`;
 
-    // For LIKE search on collections (FTS not available for collections)
+    // For LIKE search fallback (D1 doesn't support FTS5)
     const likePattern = `%${searchTerm}%`;
 
     // Detect runtime - D1 doesn't support FTS5
@@ -117,16 +117,31 @@ export async function GET(request: NextRequest) {
     }
 
     // Count total collection results
-    const collectionCountQuery = `
-      SELECT COUNT(*) as total
-      FROM collections col
-      WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
-        AND ${collectionVisibilityCondition}
-    `;
-    const collectionTotalResult = await db.prepare(collectionCountQuery).get<{ total: number }>(
-      likePattern, likePattern, likePattern
-    );
-    const collectionTotal = collectionTotalResult?.total || 0;
+    let collectionTotal = 0;
+    if (useCloudflare) {
+      // Fallback: LIKE search (no FTS5 on D1)
+      const collectionCountQuery = `
+        SELECT COUNT(*) as total
+        FROM collections col
+        WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
+          AND ${collectionVisibilityCondition}
+      `;
+      const collectionTotalResult = await db.prepare(collectionCountQuery).get<{ total: number }>(
+        likePattern, likePattern, likePattern
+      );
+      collectionTotal = collectionTotalResult?.total || 0;
+    } else {
+      // FTS5 search (local SQLite only)
+      const collectionCountQuery = `
+        SELECT COUNT(*) as total
+        FROM collections col
+        INNER JOIN collections_fts fts ON col.id = fts.collection_id
+        WHERE collections_fts MATCH ?
+          AND ${collectionVisibilityCondition}
+      `;
+      const collectionTotalResult = await db.prepare(collectionCountQuery).get<{ total: number }>(ftsQuery);
+      collectionTotal = collectionTotalResult?.total || 0;
+    }
     const total = cardTotal + collectionTotal;
 
     // Get ranked card results
@@ -201,7 +216,7 @@ export async function GET(request: NextRequest) {
       cardRows = await db.prepare(cardSearchQuery).all(ftsQuery, limit, offset);
     }
 
-    // Get collection results (simple LIKE search - no FTS for collections)
+    // Get collection results (FTS5 when available, LIKE fallback for D1)
     // Only fetch if we have room in the limit
     const collectionLimit = Math.max(0, limit - cardRows.length);
     let collectionRows: Array<{
@@ -213,28 +228,55 @@ export async function GET(request: NextRequest) {
       thumbnail_path: string | null;
       items_count: number;
       downloads_count: number;
+      rank?: number;
     }> = [];
 
     if (collectionLimit > 0) {
-      const collectionSearchQuery = `
-        SELECT
-          col.id,
-          col.slug,
-          col.name,
-          col.description,
-          col.creator,
-          col.thumbnail_path,
-          col.items_count,
-          col.downloads_count
-        FROM collections col
-        WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
-          AND ${collectionVisibilityCondition}
-        ORDER BY col.downloads_count DESC
-        LIMIT ?
-      `;
-      collectionRows = await db.prepare(collectionSearchQuery).all(
-        likePattern, likePattern, likePattern, collectionLimit
-      );
+      if (useCloudflare) {
+        // Fallback: LIKE search (no FTS5 on D1)
+        const collectionSearchQuery = `
+          SELECT
+            col.id,
+            col.slug,
+            col.name,
+            col.description,
+            col.creator,
+            col.thumbnail_path,
+            col.items_count,
+            col.downloads_count,
+            0 as rank
+          FROM collections col
+          WHERE (col.name LIKE ? OR col.description LIKE ? OR col.creator LIKE ?)
+            AND ${collectionVisibilityCondition}
+          ORDER BY col.downloads_count DESC
+          LIMIT ?
+        `;
+        collectionRows = await db.prepare(collectionSearchQuery).all(
+          likePattern, likePattern, likePattern, collectionLimit
+        );
+      } else {
+        // FTS5 search with BM25 ranking (local SQLite only)
+        // Note: bm25() column indices: 0=collection_id (unindexed), 1=name, 2=description, 3=creator
+        const collectionSearchQuery = `
+          SELECT
+            col.id,
+            col.slug,
+            col.name,
+            col.description,
+            col.creator,
+            col.thumbnail_path,
+            col.items_count,
+            col.downloads_count,
+            bm25(collections_fts, 0.0, 10.0, 5.0, 2.0) as rank
+          FROM collections col
+          INNER JOIN collections_fts fts ON col.id = fts.collection_id
+          WHERE collections_fts MATCH ?
+            AND ${collectionVisibilityCondition}
+          ORDER BY rank
+          LIMIT ?
+        `;
+        collectionRows = await db.prepare(collectionSearchQuery).all(ftsQuery, collectionLimit);
+      }
     }
 
     // Combine results - cards first (ranked by FTS), then collections
@@ -264,7 +306,7 @@ export async function GET(request: NextRequest) {
         thumbnailPath: row.thumbnail_path,
         itemsCount: row.items_count,
         downloadsCount: row.downloads_count,
-        rank: 999, // Collections don't have FTS rank, put at end
+        rank: row.rank ?? 999, // Use FTS rank when available, fallback to 999
       })),
     ];
 

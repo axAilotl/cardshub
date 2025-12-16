@@ -346,6 +346,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
   tokenize='porter unicode61 remove_diacritics 1'
 );
 
+-- Full-text search index for collections (FTS5)
+-- Indexes collection name, description, and creator for fast search
+-- Note: D1 does not support FTS5 - queries fall back to LIKE search on Cloudflare
+CREATE VIRTUAL TABLE IF NOT EXISTS collections_fts USING fts5(
+  collection_id,
+  name,
+  description,
+  creator,
+  tokenize='porter unicode61 remove_diacritics 1'
+);
+
 -- Insert default tags
 INSERT OR IGNORE INTO tags (name, slug, category) VALUES
   -- POV

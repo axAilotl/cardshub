@@ -195,6 +195,13 @@ export default function UploadPage() {
         );
 
         if (result.success && result.slug) {
+          // Trigger async image processing (fire-and-forget)
+          fetch(`/api/cards/${result.slug}/process-images`, {
+            method: 'POST',
+          }).catch((err) => {
+            console.error('Failed to trigger async image processing:', err);
+          });
+
           router.push(`/card/${result.slug}`);
         } else {
           throw new Error(result.error || 'Upload failed');
@@ -240,6 +247,13 @@ export default function UploadPage() {
         );
 
         if (result.success && result.slug) {
+          // Trigger async image processing (fire-and-forget)
+          fetch(`/api/cards/${result.slug}/process-images`, {
+            method: 'POST',
+          }).catch((err) => {
+            console.error('Failed to trigger async image processing:', err);
+          });
+
           router.push(`/card/${result.slug}`);
         } else {
           throw new Error(result.error || 'Upload failed');
@@ -325,6 +339,16 @@ export default function UploadPage() {
 
         xhr.open('POST', '/api/cards');
         xhr.send(formData);
+      });
+
+      // Trigger async image processing (fire-and-forget)
+      // This processes embedded images in the background after upload completes
+      const slug = result.data.slug;
+      fetch(`/api/cards/${slug}/process-images`, {
+        method: 'POST',
+      }).catch((err) => {
+        console.error('Failed to trigger async image processing:', err);
+        // Don't block redirect on error
       });
 
       // Redirect to the new card or collection page

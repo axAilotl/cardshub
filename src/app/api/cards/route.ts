@@ -266,14 +266,8 @@ async function handleVoxtaCollectionUpload(
       }
     }
 
-    // Process embedded images in card data
-    let displayCcv3: unknown = ccv3;
-    try {
-      const { displayData } = await processCardImages(ccv3 as unknown as Record<string, unknown>, cardId);
-      displayCcv3 = displayData;
-    } catch (imgError) {
-      console.error(`[Collection] Failed to process embedded images for ${cardData.name}:`, imgError);
-    }
+    // ASYNC IMAGE PROCESSING: Skip during upload (process async after)
+    const displayCcv3: unknown = ccv3;
 
     // Create card with collection reference
     try {
@@ -859,19 +853,10 @@ export async function POST(request: NextRequest) {
     const actualAssetsCount = savedAssetsData.length || extractedAssets.length;
     const hasActualAssets = actualAssetsCount > 0;
 
-    // Process embedded images in card data (download, convert to webp, rewrite URLs)
-    // This creates display-ready data with processed images
-    let displayCardData = parsedCard.raw;
-    try {
-      const { displayData } = await processCardImages(
-        parsedCard.raw as Record<string, unknown>,
-        id
-      );
-      displayCardData = displayData;
-    } catch (error) {
-      console.error('Failed to process embedded images:', error);
-      // Continue with original data if processing fails
-    }
+    // ASYNC IMAGE PROCESSING: Don't process embedded images during upload
+    // This was causing 30-50 second upload times for cards with external images
+    // Instead, we'll process them async after upload via /api/cards/[slug]/process-images
+    const displayCardData = parsedCard.raw;
 
     // Enforce card data size limit (10MB max for cardData JSON)
     const cardDataJson = JSON.stringify(displayCardData);

@@ -114,7 +114,13 @@ export function CardItem({ card, onQuickView }: CardItemProps) {
           />
         ) : (
           <div className="w-full h-full bg-cosmic-teal/50 flex items-center justify-center">
-            <span className="text-4xl text-starlight/30">?</span>
+            <Image
+              src="/ca-logo.svg"
+              alt="Character Archives"
+              width={120}
+              height={120}
+              className="opacity-40"
+            />
           </div>
         )}
 
