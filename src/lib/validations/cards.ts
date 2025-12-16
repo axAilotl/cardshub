@@ -83,12 +83,14 @@ export const CardUploadFormSchema = z.object({
 
 // Supported file extensions
 export const SUPPORTED_EXTENSIONS = ['.png', '.json', '.charx', '.voxpkg'] as const;
-export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+// Note: Removed MAX_FILE_SIZE validation - Cloudflare naturally rejects >50MB FormData uploads
+// Large files should use chunked upload (threshold: 40MB)
 
 export const CardFileSchema = z.object({
   name: z.string().refine(
     name => SUPPORTED_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext)),
     { message: `File must be one of: ${SUPPORTED_EXTENSIONS.join(', ')}` }
   ),
-  size: z.number().max(MAX_FILE_SIZE, `File must be less than 50MB`),
+  // No size validation - let Cloudflare handle FormData limit, chunked upload handles large files
+  size: z.number().positive(),
 });

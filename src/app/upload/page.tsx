@@ -155,7 +155,7 @@ export default function UploadPage() {
       // Check if we should use chunked upload for large files
       const { shouldUseChunkedUpload, uploadChunked } = await getChunkedUpload();
 
-      // Use chunked upload for large single-character files (>=75MB)
+      // Use chunked upload for large single-character files (>=40MB)
       // Multi-char packages (Voxta collections) always use FormData for server-side handling
       if (shouldUseChunkedUpload(file.size) && !parseState.result.isMultiCharPackage) {
         setUploadStage('chunking');
