@@ -174,8 +174,8 @@ function sanitizeCssImpl(css: string, options: CssSanitizeOptions = {}): string 
         if (trimmed.startsWith('@') || match.includes('@')) return match;
 
         // Handle comma-separated selectors
-        const selectors = trimmed.split(',').map(s => s.trim());
-        const scoped = selectors.map(s => `${scope} ${s}`).join(', ');
+        const selectors = trimmed.split(',').map((s: string) => s.trim());
+        const scoped = selectors.map((s: string) => `${scope} ${s}`).join(', ');
         return `${scoped} {`;
       });
     }
