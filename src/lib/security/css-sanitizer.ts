@@ -1,5 +1,3 @@
-import DOMPurify from 'isomorphic-dompurify';
-
 export interface CssSanitizeOptions {
   /** Scope CSS to a specific selector (e.g., '[data-profile]') */
   scope?: string;
@@ -31,22 +29,29 @@ export async function sanitizeCss(css: string, options: CssSanitizeOptions = {})
  * CSS sanitizer using regex-based whitelist/blacklist (works everywhere)
  */
 function sanitizeCssImpl(css: string, options: CssSanitizeOptions = {}): string | null {
-  const { scope, maxNestingDepth = 10 } = options;
+  const {
+    scope,
+    maxNestingDepth = 10,
+    maxSelectors = 500,
+    allowAnimations = true,
+    allowMediaQueries = true,
+  } = options;
 
   /** Dangerous properties - NEVER allow these */
   const BLOCKED_PROPERTIES = new Set([
     'behavior', '-moz-binding', 'expression', '-ms-filter',
     'binding', 'script', 'javascript', 'vbscript', 'import',
     'content', // Can be used for data exfiltration
+    '-webkit-user-modify', // Can be used to make elements editable
   ]);
 
   try {
-    // Step 0: Cheap nesting-depth check (DoS protection + blocks nested CSS syntax)
-    // Depth counts brace nesting outside strings/comments.
+    // Step 0: Check for unbalanced braces (invalid CSS)
     let braceDepth = 0;
     let maxBraceDepth = 0;
     let inString: '"' | "'" | null = null;
     let inComment = false;
+
     for (let i = 0; i < css.length; i++) {
       const ch = css[i];
       const next = css[i + 1];
@@ -88,26 +93,67 @@ function sanitizeCssImpl(css: string, options: CssSanitizeOptions = {}): string 
           throw new Error('Nesting too deep');
         }
       } else if (ch === '}') {
-        braceDepth = Math.max(0, braceDepth - 1);
+        braceDepth--;
+        if (braceDepth < 0) {
+          // Unbalanced braces
+          throw new Error('Invalid CSS: unbalanced braces');
+        }
       }
+    }
+
+    // Check final brace balance
+    if (braceDepth !== 0) {
+      throw new Error('Invalid CSS: unbalanced braces');
+    }
+
+    // Count selectors (approximate - count { outside of @-rules)
+    const selectorCount = (css.match(/[^@{}][^{}]*\{/g) || []).length;
+    if (selectorCount > maxSelectors) {
+      throw new Error('Too many selectors');
     }
 
     // Remove dangerous patterns
     let sanitized = css;
 
-    // Block @import and @font-face
+    // Block @import and @font-face (always)
     sanitized = sanitized.replace(/@import\s+[^;]+;/gi, '');
     sanitized = sanitized.replace(/@font-face\s*\{[^}]*\}/gi, '');
 
+    // Handle @keyframes based on option
+    if (!allowAnimations) {
+      sanitized = sanitized.replace(/@keyframes\s+[^{]+\{[^}]*\}/gi, '');
+    }
+
+    // Handle @media based on option
+    if (!allowMediaQueries) {
+      sanitized = sanitized.replace(/@media\s+[^{]+\{[^}]*\}/gi, '');
+    }
+
     // Block dangerous properties
     for (const prop of BLOCKED_PROPERTIES) {
-      const regex = new RegExp(`\\b${prop}\\s*:`, 'gi');
+      // Use negative lookbehind to ensure property name doesn't have a hyphen or alphanumeric before it
+      // This prevents matching "justify-content" when blocking "content"
+      const regex = new RegExp(`(?<![-\\w])${prop}\\s*:`, 'gi');
       sanitized = sanitized.replace(regex, 'invalid-prop:');
     }
 
-    // Block dangerous protocols in url()
+    // Block expression() function (IE-specific XSS vector)
+    sanitized = sanitized.replace(/expression\s*\([^)]*\)/gi, '');
+
+    // Block dangerous protocols in url() - decode URL encoding first
     sanitized = sanitized.replace(/url\s*\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (match, url) => {
-      const trimmed = url.trim();
+      let trimmed = url.trim();
+
+      // Decode URL encoding to catch bypass attempts
+      if (/%[0-9a-f]{2}/i.test(trimmed)) {
+        try {
+          trimmed = decodeURIComponent(trimmed);
+        } catch {
+          // Invalid encoding - block it
+          return '';
+        }
+      }
+
       if (/^(javascript|vbscript|file|about):/i.test(trimmed)) {
         return '';
       }
@@ -122,16 +168,16 @@ function sanitizeCssImpl(css: string, options: CssSanitizeOptions = {}): string 
 
     // Apply scoping if requested
     if (scope) {
-      sanitized = sanitized.replace(/([^{}]+)\{/g, (match, selector) => {
+      sanitized = sanitized.replace(/([^{}@]+)\{/g, (match, selector) => {
         const trimmed = selector.trim();
-        if (trimmed.startsWith('@')) return match; // Skip at-rules
-        return `${scope} ${trimmed} {`;
-      });
-    }
+        // Skip at-rules (@keyframes, @media, etc.)
+        if (trimmed.startsWith('@') || match.includes('@')) return match;
 
-    // DOMPurify second pass if available
-    if (typeof (DOMPurify as any).sanitizeCSS === 'function') {
-      sanitized = (DOMPurify as any).sanitizeCSS(sanitized);
+        // Handle comma-separated selectors
+        const selectors = trimmed.split(',').map(s => s.trim());
+        const scoped = selectors.map(s => `${scope} ${s}`).join(', ');
+        return `${scoped} {`;
+      });
     }
 
     return sanitized || ' ';
