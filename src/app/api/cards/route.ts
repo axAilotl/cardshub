@@ -909,7 +909,7 @@ export async function POST(request: NextRequest) {
     // Downloads external image URLs, converts to WebP, uploads to R2, rewrites URLs in card data
     // Note: On Cloudflare Workers, this may not complete if Worker terminates before processing finishes
     // Users can manually trigger reprocessing via /api/cards/[slug]/process-images if needed
-    processCardImages(displayCardData, cardId)
+    processCardImages(displayCardData as Record<string, unknown>, cardId)
       .then(({ displayData, urlMapping }) => {
         if (urlMapping.size > 0) {
           console.log(`[AsyncImageProcessing] Processed ${urlMapping.size} embedded images for card ${slug}`);
