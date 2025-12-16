@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/async-db';
 import { getSession } from '@/lib/auth';
-import { sanitizeCss } from '@/lib/security/css-sanitizer';
 
 interface UserProfile {
   id: string;
@@ -84,22 +83,13 @@ export async function GET(
       isFollowing = !!follow;
     }
 
-    // Sanitize profile CSS server-side (Node.js runtime only)
-    let sanitizedCss: string | null = null;
-    if (result.profile_css) {
-      sanitizedCss = await sanitizeCss(result.profile_css, {
-        scope: '[data-profile]',
-        maxSelectors: 500,
-      });
-    }
-
     const profile: UserProfile = {
       id: result.id,
       username: result.username,
       displayName: result.display_name,
       avatarUrl: result.avatar_url,
       bio: result.bio,
-      profileCss: sanitizedCss, // Already sanitized
+      profileCss: result.profile_css, // Will be sanitized client-side
       isAdmin: result.is_admin === 1,
       createdAt: result.created_at,
       stats: {

@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth/context';
 import { cn } from '@/lib/utils/cn';
 import { formatMonthYear } from '@/lib/utils/format';
 import { CARDS_PER_PAGE } from '@/lib/constants';
+import { sanitizeCss } from '@/lib/security/css-sanitizer';
 
 interface UserProfile {
   id: string;
@@ -54,6 +55,7 @@ export default function UserProfilePage() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followLoading, setFollowLoading] = useState(false);
+  const [sanitizedProfileCss, setSanitizedProfileCss] = useState<string | null>(null);
 
   const isOwnProfile = currentUser?.username === username;
 
@@ -64,6 +66,24 @@ export default function UserProfilePage() {
       setFollowersCount(profile.followersCount);
     }
   }, [profile]);
+
+  // Sanitize profile CSS (client-only)
+  useEffect(() => {
+    if (!profile?.profileCss) {
+      setSanitizedProfileCss(null);
+      return;
+    }
+
+    sanitizeCss(profile.profileCss, {
+      scope: '[data-profile]',
+      maxSelectors: 500,
+    }).then(sanitized => {
+      setSanitizedProfileCss(sanitized);
+    }).catch(err => {
+      console.error('Profile CSS sanitization failed:', err);
+      setSanitizedProfileCss(null);
+    });
+  }, [profile?.profileCss]);
 
   const handleFollowToggle = async () => {
     if (!currentUser || isOwnProfile) return;
@@ -287,10 +307,10 @@ export default function UserProfilePage() {
         </div>
       </div>
 
-      {/* Custom Profile CSS (already sanitized server-side) */}
-      {profile.profileCss && (
+      {/* Custom Profile CSS (sanitized client-side) */}
+      {sanitizedProfileCss && (
         <style dangerouslySetInnerHTML={{
-          __html: profile.profileCss
+          __html: sanitizedProfileCss
         }} />
       )}
 
