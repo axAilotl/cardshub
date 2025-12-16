@@ -67,15 +67,30 @@ export function CardDetailClient({ card }: CardDetailClientProps) {
   // Extract custom CSS from creator notes if present
   // Use processed creator_notes from cardData (has rewritten image URLs)
   const processedCreatorNotes = card.cardData.data.creator_notes || card.creatorNotes;
-  const customCss = useMemo(() => {
-    if (!processedCreatorNotes) return null;
+  const [customCss, setCustomCss] = useState<string | null>(null);
+
+  // Async CSS sanitization
+  useEffect(() => {
+    if (!processedCreatorNotes) {
+      setCustomCss(null);
+      return;
+    }
+
     const styleMatch = processedCreatorNotes.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-    if (!styleMatch) return null;
+    if (!styleMatch) {
+      setCustomCss(null);
+      return;
+    }
 
     // Sanitize and scope CSS to card page only
-    return sanitizeCss(styleMatch[1], {
+    sanitizeCss(styleMatch[1], {
       scope: '[data-card-page]',
       maxSelectors: 300,
+    }).then(sanitized => {
+      setCustomCss(sanitized);
+    }).catch(err => {
+      console.error('CSS sanitization failed:', err);
+      setCustomCss(null);
     });
   }, [processedCreatorNotes]);
 

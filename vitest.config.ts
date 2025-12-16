@@ -10,6 +10,7 @@ export default defineConfig({
       '**/dist/**',
       '**/e2e/**', // E2E tests run via Playwright, not vitest
       '**/.{idea,git,cache,output,temp}/**',
+      '**/*.spec.ts', // Playwright tests use .spec.ts
     ],
   },
   resolve: {

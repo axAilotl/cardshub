@@ -1,5 +1,5 @@
-import * as cssTree from 'css-tree';
 import DOMPurify from 'isomorphic-dompurify';
+import { isCloudflareRuntime } from '@/lib/db';
 
 export interface CssSanitizeOptions {
   /** Scope CSS to a specific selector (e.g., '[data-profile]') */
@@ -12,6 +12,21 @@ export interface CssSanitizeOptions {
   maxSelectors?: number;
   /** Maximum nesting depth */
   maxNestingDepth?: number;
+}
+
+// Dynamic import for css-tree (only works on Node.js, not Cloudflare Workers)
+let cssTreeModule: typeof import('css-tree') | null = null;
+
+async function getCssTree() {
+  if (cssTreeModule) return cssTreeModule;
+  if (isCloudflareRuntime()) return null;
+
+  try {
+    cssTreeModule = await import('css-tree');
+    return cssTreeModule;
+  } catch {
+    return null;
+  }
 }
 
 /** Property whitelist - only these properties are allowed */
@@ -79,10 +94,118 @@ const BLOCKED_PSEUDO_CLASSES = new Set([
 ]);
 
 /**
+ * Fallback CSS sanitizer for Cloudflare Workers (where css-tree is unavailable)
+ * Uses regex-based sanitization instead of AST parsing
+ */
+function sanitizeCssFallback(css: string, options: CssSanitizeOptions = {}): string | null {
+  const { scope, maxNestingDepth = 10 } = options;
+
+  try {
+    // Basic nesting depth check
+    let braceDepth = 0;
+    let maxBraceDepth = 0;
+    let inString: '"' | "'" | null = null;
+    let inComment = false;
+
+    for (let i = 0; i < css.length; i++) {
+      const ch = css[i];
+      const next = css[i + 1];
+
+      if (inComment) {
+        if (ch === '*' && next === '/') {
+          inComment = false;
+          i++;
+        }
+        continue;
+      }
+
+      if (inString) {
+        if (ch === '\\') {
+          i++;
+          continue;
+        }
+        if (ch === inString) {
+          inString = null;
+        }
+        continue;
+      }
+
+      if (ch === '/' && next === '*') {
+        inComment = true;
+        i++;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = ch;
+        continue;
+      }
+
+      if (ch === '{') {
+        braceDepth++;
+        if (braceDepth > maxBraceDepth) maxBraceDepth = braceDepth;
+        if (maxBraceDepth > maxNestingDepth) {
+          throw new Error('Nesting too deep');
+        }
+      } else if (ch === '}') {
+        braceDepth = Math.max(0, braceDepth - 1);
+      }
+    }
+
+    // Remove dangerous patterns
+    let sanitized = css;
+
+    // Block @import and @font-face
+    sanitized = sanitized.replace(/@import\s+[^;]+;/gi, '');
+    sanitized = sanitized.replace(/@font-face\s*\{[^}]*\}/gi, '');
+
+    // Block dangerous properties
+    for (const prop of BLOCKED_PROPERTIES) {
+      const regex = new RegExp(`\\b${prop}\\s*:`, 'gi');
+      sanitized = sanitized.replace(regex, 'invalid-prop:');
+    }
+
+    // Block dangerous protocols in url()
+    sanitized = sanitized.replace(/url\s*\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (match, url) => {
+      const trimmed = url.trim();
+      if (/^(javascript|vbscript|file|about):/i.test(trimmed)) {
+        return '';
+      }
+      if (/^data:/i.test(trimmed) && !/^data:image\//i.test(trimmed)) {
+        return '';
+      }
+      return match;
+    });
+
+    // Block :visited pseudo-class
+    sanitized = sanitized.replace(/:visited\b/gi, '');
+
+    // Apply scoping if requested
+    if (scope) {
+      sanitized = sanitized.replace(/([^{}]+)\{/g, (match, selector) => {
+        const trimmed = selector.trim();
+        if (trimmed.startsWith('@')) return match; // Skip at-rules
+        return `${scope} ${trimmed} {`;
+      });
+    }
+
+    // DOMPurify second pass if available
+    if (typeof (DOMPurify as any).sanitizeCSS === 'function') {
+      sanitized = (DOMPurify as any).sanitizeCSS(sanitized);
+    }
+
+    return sanitized || ' ';
+  } catch (error) {
+    console.error('CSS sanitization (fallback) failed:', error);
+    return null;
+  }
+}
+
+/**
  * Sanitize CSS string using AST parsing + DOMPurify
  * Returns sanitized CSS or null if invalid
  */
-export function sanitizeCss(css: string, options: CssSanitizeOptions = {}): string | null {
+export async function sanitizeCss(css: string, options: CssSanitizeOptions = {}): Promise<string | null> {
   const {
     scope,
     allowAnimations = true,
@@ -96,6 +219,12 @@ export function sanitizeCss(css: string, options: CssSanitizeOptions = {}): stri
 
   // Preserve whitespace-only CSS (treat as valid, but no-op)
   if (css.trim() === '') return css;
+
+  // On Cloudflare Workers, use fallback sanitizer
+  const cssTree = await getCssTree();
+  if (!cssTree) {
+    return sanitizeCssFallback(css, options);
+  }
 
   try {
     // Step 0: Cheap nesting-depth check (DoS protection + blocks nested CSS syntax)
@@ -333,7 +462,7 @@ export function sanitizeCss(css: string, options: CssSanitizeOptions = {}): stri
 
     // Step 9: Apply scoping if requested
     if (scope) {
-      sanitized = scopeCss(sanitized, scope);
+      sanitized = await scopeCss(sanitized, scope);
     }
 
     // Step 10: Second pass with DOMPurify for defense-in-depth
@@ -359,7 +488,17 @@ export function sanitizeCss(css: string, options: CssSanitizeOptions = {}): stri
 /**
  * Scope CSS by prepending a selector to all rules
  */
-function scopeCss(css: string, scope: string): string {
+async function scopeCss(css: string, scope: string): Promise<string> {
+  const cssTree = await getCssTree();
+  if (!cssTree) {
+    // Fallback: simple regex-based scoping for Workers
+    return css.replace(/([^{}]+)\{/g, (match, selector) => {
+      const trimmed = selector.trim();
+      if (trimmed.startsWith('@')) return match; // Skip at-rules
+      return `${scope} ${trimmed} {`;
+    });
+  }
+
   try {
     const ast = cssTree.parse(css);
 
@@ -369,22 +508,22 @@ function scopeCss(css: string, scope: string): string {
         // Prepend scope to each selector
         if (node.prelude && node.prelude.type === 'SelectorList') {
           const selectorList = node.prelude;
-          const newSelectors: cssTree.CssNode[] = [];
+          const newSelectors: any[] = [];
 
           // Iterate through each selector in the list
-          selectorList.children.forEach((selector) => {
+          selectorList.children.forEach((selector: any) => {
             if (selector.type === 'Selector') {
               // Parse the scope selector
-              const scopeAst = cssTree.parse(scope, { context: 'selector' }) as cssTree.Selector;
+              const scopeAst = cssTree.parse(scope, { context: 'selector' }) as any;
 
               // Create a new selector: scope + descendant combinator + original selector
-              const newSelector: cssTree.Selector = {
+              const newSelector: any = {
                 type: 'Selector',
-                children: new cssTree.List<cssTree.CssNode>(),
+                children: new cssTree.List<any>(),
               };
 
               // Add scope selector nodes
-              scopeAst.children.forEach((child) => {
+              scopeAst.children.forEach((child: any) => {
                 newSelector.children.appendData(child);
               });
 
@@ -392,10 +531,10 @@ function scopeCss(css: string, scope: string): string {
               newSelector.children.appendData({
                 type: 'WhiteSpace',
                 value: ' ',
-              } as cssTree.WhiteSpace);
+              } as any);
 
               // Add original selector nodes
-              selector.children.forEach((child) => {
+              selector.children.forEach((child: any) => {
                 newSelector.children.appendData(child);
               });
 
@@ -404,7 +543,7 @@ function scopeCss(css: string, scope: string): string {
           });
 
           // Replace selector list with scoped selectors
-          selectorList.children = new cssTree.List<cssTree.CssNode>();
+          selectorList.children = new cssTree.List<any>();
           newSelectors.forEach((sel) => selectorList.children.appendData(sel));
         }
       }

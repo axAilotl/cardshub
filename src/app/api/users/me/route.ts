@@ -7,9 +7,9 @@ import { sanitizeCss, validateNoUiBreaking } from '@/lib/security/css-sanitizer'
  * Sanitize CSS using comprehensive security checks.
  * Returns sanitized CSS string or null if invalid.
  */
-function sanitizeProfileCSS(css: string): string | null {
+async function sanitizeProfileCSS(css: string): Promise<string | null> {
   // Use the shared sanitizer with profile-specific settings
-  const sanitized = sanitizeCss(css, {
+  const sanitized = await sanitizeCss(css, {
     scope: '[data-profile]',
     maxSelectors: 500,
     maxNestingDepth: 10,
@@ -179,7 +179,7 @@ export async function PUT(request: NextRequest) {
       // Comprehensive CSS sanitization with scoping and validation
       let sanitizedCss: string | null = null;
       if (profileCss) {
-        sanitizedCss = sanitizeProfileCSS(profileCss);
+        sanitizedCss = await sanitizeProfileCSS(profileCss);
         if (sanitizedCss === null) {
           return NextResponse.json(
             { error: 'Invalid CSS: security validation failed' },

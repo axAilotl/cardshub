@@ -55,6 +55,7 @@ export default function UserProfilePage() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followLoading, setFollowLoading] = useState(false);
+  const [sanitizedProfileCss, setSanitizedProfileCss] = useState<string | null>(null);
 
   const isOwnProfile = currentUser?.username === username;
 
@@ -65,6 +66,24 @@ export default function UserProfilePage() {
       setFollowersCount(profile.followersCount);
     }
   }, [profile]);
+
+  // Sanitize profile CSS
+  useEffect(() => {
+    if (!profile?.profileCss) {
+      setSanitizedProfileCss(null);
+      return;
+    }
+
+    sanitizeCss(profile.profileCss, {
+      scope: '[data-profile]',
+      maxSelectors: 500,
+    }).then(sanitized => {
+      setSanitizedProfileCss(sanitized);
+    }).catch(err => {
+      console.error('Profile CSS sanitization failed:', err);
+      setSanitizedProfileCss(null);
+    });
+  }, [profile?.profileCss]);
 
   const handleFollowToggle = async () => {
     if (!currentUser || isOwnProfile) return;
@@ -289,12 +308,9 @@ export default function UserProfilePage() {
       </div>
 
       {/* Custom Profile CSS */}
-      {profile.profileCss && (
+      {sanitizedProfileCss && (
         <style dangerouslySetInnerHTML={{
-          __html: sanitizeCss(profile.profileCss, {
-            scope: '[data-profile]',
-            maxSelectors: 500,
-          }) || ''
+          __html: sanitizedProfileCss
         }} />
       )}
 
