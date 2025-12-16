@@ -89,7 +89,7 @@ export async function GET(
       displayName: result.display_name,
       avatarUrl: result.avatar_url,
       bio: result.bio,
-      profileCss: result.profile_css,
+      profileCss: result.profile_css, // Will be sanitized client-side
       isAdmin: result.is_admin === 1,
       createdAt: result.created_at,
       stats: {

@@ -4,8 +4,6 @@ import path from 'node:path';
 import { parseCard } from '@character-foundry/character-foundry/loader';
 import { describe, expect, it } from 'vitest';
 
-const DEFAULT_FIXTURES_DIR = '/home/vega/ai/character-foundry/fixtures';
-
 type Tier1Fixture = {
   relPath: string;
   expectedFormat: 'json' | 'png' | 'charx' | 'voxta';
@@ -48,8 +46,8 @@ function parseTier1FromManifest(manifest: string): Tier1Fixture[] {
   return entries;
 }
 
-function getFixturesDir(): string {
-  return process.env.CF_FIXTURES_DIR?.trim() || DEFAULT_FIXTURES_DIR;
+function getFixturesDir(): string | null {
+  return process.env.CF_FIXTURES_DIR?.trim() || null;
 }
 
 function allowMissingFixtures(): boolean {
@@ -62,7 +60,7 @@ function toBytes(buffer: Buffer): Uint8Array {
 }
 
 const fixturesDir = getFixturesDir();
-const fixturesExist = fs.existsSync(fixturesDir);
+const fixturesExist = fixturesDir !== null && fs.existsSync(fixturesDir);
 
 if (!fixturesExist) {
   if (allowMissingFixtures()) {
@@ -71,8 +69,8 @@ if (!fixturesExist) {
     describe('Golden fixtures (Tier 1)', () => {
       it('requires CF_FIXTURES_DIR', () => {
         throw new Error(
-          `[fixtures] Missing fixtures directory: ${fixturesDir}\n` +
-            `Set CF_FIXTURES_DIR to the golden fixtures root (example: ${DEFAULT_FIXTURES_DIR})\n` +
+          `[fixtures] Missing fixtures directory\n` +
+            `Set CF_FIXTURES_DIR to the golden fixtures root\n` +
             `or set CF_ALLOW_MISSING_FIXTURES=1 to skip this suite.`,
         );
       });

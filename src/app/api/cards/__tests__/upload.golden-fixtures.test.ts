@@ -6,10 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseFromBufferWithAssets } from '@/lib/client/card-parser';
 
-const DEFAULT_FIXTURES_DIR = '/home/vega/ai/character-foundry/fixtures';
-
-function getFixturesDir(): string {
-  return process.env.CF_FIXTURES_DIR?.trim() || DEFAULT_FIXTURES_DIR;
+function getFixturesDir(): string | null {
+  return process.env.CF_FIXTURES_DIR?.trim() || null;
 }
 
 function allowMissingFixtures(): boolean {
@@ -84,7 +82,7 @@ import { POST } from '@/app/api/cards/route';
 import { createCard } from '@/lib/db/cards';
 
 const fixturesDir = getFixturesDir();
-const fixturesExist = fs.existsSync(fixturesDir);
+const fixturesExist = fixturesDir !== null && fs.existsSync(fixturesDir);
 
 const BASIC_UPLOAD_FIXTURES = [
   'basic/png/baseline_v3_small.png',
@@ -100,8 +98,8 @@ if (!fixturesExist) {
     describe('POST /api/cards (golden fixtures)', () => {
       it('requires CF_FIXTURES_DIR', () => {
         throw new Error(
-          `[fixtures] Missing fixtures directory: ${fixturesDir}\n` +
-            `Set CF_FIXTURES_DIR to the golden fixtures root (example: ${DEFAULT_FIXTURES_DIR})\n` +
+          `[fixtures] Missing fixtures directory\n` +
+            `Set CF_FIXTURES_DIR to the golden fixtures root\n` +
             `or set CF_ALLOW_MISSING_FIXTURES=1 to skip this suite.`,
         );
       });

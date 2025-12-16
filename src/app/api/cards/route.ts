@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCards, createCard, computeContentHash, checkBlockedTags, updateCardVersion } from '@/lib/db/cards';
+import { getCards, createCard, computeContentHash, checkBlockedTags } from '@/lib/db/cards';
 import { parseCard } from '@character-foundry/character-foundry/loader';
 import { isVoxta, readVoxta, voxtaToCCv3, enrichVoxtaAsset, type VoxtaData, type VoxtaBook, type ExtractedVoxtaAsset } from '@character-foundry/character-foundry/voxta';
 import { toUint8Array } from '@character-foundry/character-foundry/core';
 import { countCardTokens } from '@/lib/client/tokenizer';
 import { saveAssets } from '@/lib/image';
-import { processThumbnail, processCardImages } from '@/lib/image/process';
+import { processThumbnail } from '@/lib/image/process';
 import { generateId, generateSlug } from '@/lib/utils';
 import { store, getPublicUrl } from '@/lib/storage';
 import { getSession } from '@/lib/auth';
@@ -905,20 +905,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // SERVER-SIDE ASYNC: Process embedded images in background (no client involvement)
-    // Downloads external image URLs, converts to WebP, uploads to R2, rewrites URLs in card data
-    // Note: On Cloudflare Workers, this may not complete if Worker terminates before processing finishes
-    // Users can manually trigger reprocessing via /api/cards/[slug]/process-images if needed
-    processCardImages(displayCardData as Record<string, unknown>, cardId)
-      .then(({ displayData, urlMapping }) => {
-        if (urlMapping.size > 0) {
-          console.log(`[AsyncImageProcessing] Processed ${urlMapping.size} embedded images for card ${slug}`);
-          return updateCardVersion(versionId, { cardData: displayData });
-        }
-      })
-      .catch(err => {
-        console.error(`[AsyncImageProcessing] Failed for card ${slug}:`, err);
-      });
+    // NOTE: Image processing disabled temporarily to avoid 503 errors
+    // User can manually trigger processing via /api/cards/[slug]/process-images
+    // Card page will show "processing" state with refresh button
+    console.log(`[ImageProcessing] Card uploaded: ${slug} - processing can be triggered manually`);
 
     // Invalidate listing caches so new card appears in results
     await cacheDeleteByPrefix(CACHE_PREFIX.CARDS);

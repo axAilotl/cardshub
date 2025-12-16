@@ -5,10 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseCard } from '@character-foundry/character-foundry/loader';
 
-const DEFAULT_FIXTURES_DIR = '/home/vega/ai/character-foundry/fixtures';
-
-function getFixturesDir(): string {
-  return process.env.CF_FIXTURES_DIR?.trim() || DEFAULT_FIXTURES_DIR;
+function getFixturesDir(): string | null {
+  return process.env.CF_FIXTURES_DIR?.trim() || null;
 }
 
 function allowMissingFixtures(): boolean {
@@ -113,7 +111,7 @@ import { store } from '@/lib/storage';
 import { POST } from '@/app/api/uploads/complete/route';
 
 const fixturesDir = getFixturesDir();
-const fixturesExist = fs.existsSync(fixturesDir);
+const fixturesExist = fixturesDir !== null && fs.existsSync(fixturesDir);
 
 const FIXTURE_REL = 'extended/charx/v3_many_assets_01.charx';
 
@@ -124,8 +122,8 @@ if (!fixturesExist) {
     describe('POST /api/uploads/complete (golden assets)', () => {
       it('requires CF_FIXTURES_DIR', () => {
         throw new Error(
-          `[fixtures] Missing fixtures directory: ${fixturesDir}\n` +
-            `Set CF_FIXTURES_DIR to the golden fixtures root (example: ${DEFAULT_FIXTURES_DIR})\n` +
+          `[fixtures] Missing fixtures directory\n` +
+            `Set CF_FIXTURES_DIR to the golden fixtures root\n` +
             `or set CF_ALLOW_MISSING_FIXTURES=1 to skip this suite.`,
         );
       });
@@ -189,7 +187,7 @@ if (!fixturesExist) {
       const mockedStore = store as unknown as ReturnType<typeof vi.fn>;
       const storedAssetCalls = mockedStore.mock.calls.filter((call) => {
         const objectPath = call[1] as string;
-        return typeof objectPath === 'string' && objectPath.startsWith(`uploads/assets/card_test_id/`);
+        return typeof objectPath === 'string' && objectPath.startsWith(`assets/card_test_id/`);
       });
       expect(storedAssetCalls.length).toBe(expectedNonMain.length);
 
@@ -209,7 +207,7 @@ if (!fixturesExist) {
       const sampleOriginalPath = expectedNonMain.find((a) => a.path)?.path;
       expect(sampleOriginalPath).toBeTruthy();
       expect(processedCardData).not.toContain(`embeded://${sampleOriginalPath as string}`);
-      expect(processedCardData).toContain('/api/uploads/uploads/assets/card_test_id/');
+      expect(processedCardData).toContain('/api/uploads/assets/card_test_id/');
     });
   });
 }

@@ -2,14 +2,6 @@
 
 import { useEffect, useState } from 'react';
 
-interface AdminSetting {
-  key: string;
-  value: string;
-  description: string | null;
-  updated_at: number;
-  updated_by: string | null;
-}
-
 interface StorageStats {
   totalObjects: number;
   totalSize: number;
@@ -19,9 +11,29 @@ interface StorageStats {
   orphanedKeys: string[];
 }
 
+interface MaintenanceMode {
+  enabled: boolean;
+  message: string;
+}
+
+interface SiteSettings {
+  uploadsEnabled: boolean;
+  allowAnonUploads: boolean;
+  registrationEnabled: boolean;
+  imageProxyEnabled: boolean;
+  imageCacheEnabled: boolean;
+}
+
 export default function AdminSettingsPage() {
-  const [settings, setSettings] = useState<AdminSetting[]>([]);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [maintenance, setMaintenance] = useState<MaintenanceMode>({ enabled: false, message: '' });
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>({
+    uploadsEnabled: true,
+    allowAnonUploads: false,
+    registrationEnabled: true,
+    imageProxyEnabled: true,
+    imageCacheEnabled: true,
+  });
   const [loading, setLoading] = useState(true);
   const [storageLoading, setStorageLoading] = useState(false);
   const [cleanupLoading, setCleanupLoading] = useState(false);
@@ -29,20 +41,107 @@ export default function AdminSettingsPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    fetchSettings();
+    fetchSiteSettings();
+    fetchMaintenanceMode();
   }, []);
 
-  async function fetchSettings() {
+  async function fetchSiteSettings() {
     try {
       const res = await fetch('/api/admin/settings');
       if (!res.ok) throw new Error('Failed to fetch settings');
       const data = await res.json();
-      setSettings(data.settings);
+
+      // Extract all settings from response
+      const getSetting = (key: string) => data.settings.find((s: { key: string; value: string }) => s.key === key)?.value === 'true';
+
+      setSiteSettings({
+        uploadsEnabled: getSetting('uploads_enabled'),
+        allowAnonUploads: getSetting('allow_anon_uploads'),
+        registrationEnabled: getSetting('registration_enabled'),
+        imageProxyEnabled: getSetting('image_proxy_enabled'),
+        imageCacheEnabled: getSetting('image_cache_enabled'),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
+  }
+
+  async function fetchMaintenanceMode() {
+    try {
+      const res = await fetch('/api/admin/maintenance');
+      if (!res.ok) throw new Error('Failed to fetch maintenance mode');
+      const data = await res.json();
+      setMaintenance(data);
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to fetch maintenance mode' });
+    }
+  }
+
+  async function toggleMaintenanceMode(enabled: boolean) {
+    try {
+      const res = await fetch('/api/admin/maintenance', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, message: maintenance.message }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update maintenance mode');
+
+      setMaintenance(prev => ({ ...prev, enabled }));
+      setMessage({ type: 'success', text: `Maintenance mode ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to update maintenance mode' });
+    }
+
+    // Clear message after 3 seconds
+    setTimeout(() => setMessage(null), 3000);
+  }
+
+  async function updateMaintenanceMessage(newMessage: string) {
+    setMaintenance(prev => ({ ...prev, message: newMessage }));
+
+    if (maintenance.enabled) {
+      try {
+        await fetch('/api/admin/maintenance', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: maintenance.enabled, message: newMessage }),
+        });
+      } catch (err) {
+        console.error('Failed to update maintenance message:', err);
+      }
+    }
+  }
+
+  async function toggleSetting(key: string, enabled: boolean, label: string) {
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value: enabled ? 'true' : 'false' }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update setting');
+
+      // Update local state based on which setting was changed
+      setSiteSettings(prev => ({
+        ...prev,
+        ...(key === 'uploads_enabled' && { uploadsEnabled: enabled }),
+        ...(key === 'allow_anon_uploads' && { allowAnonUploads: enabled }),
+        ...(key === 'registration_enabled' && { registrationEnabled: enabled }),
+        ...(key === 'image_proxy_enabled' && { imageProxyEnabled: enabled }),
+        ...(key === 'image_cache_enabled' && { imageCacheEnabled: enabled }),
+      }));
+
+      setMessage({ type: 'success', text: `${label} ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to update setting' });
+    }
+
+    // Clear message after 3 seconds
+    setTimeout(() => setMessage(null), 3000);
   }
 
   async function fetchStorageStats() {
@@ -57,30 +156,6 @@ export default function AdminSettingsPage() {
     } finally {
       setStorageLoading(false);
     }
-  }
-
-  async function toggleSetting(key: string, currentValue: string) {
-    const newValue = currentValue === 'true' ? 'false' : 'true';
-
-    try {
-      const res = await fetch('/api/admin/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, value: newValue }),
-      });
-
-      if (!res.ok) throw new Error('Failed to update setting');
-
-      setSettings(prev =>
-        prev.map(s => (s.key === key ? { ...s, value: newValue, updated_at: Date.now() / 1000 } : s))
-      );
-      setMessage({ type: 'success', text: `${key} updated to ${newValue}` });
-    } catch (err) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to update setting' });
-    }
-
-    // Clear message after 3 seconds
-    setTimeout(() => setMessage(null), 3000);
   }
 
   async function cleanupOrphanedFiles() {
@@ -153,33 +228,151 @@ export default function AdminSettingsPage() {
         </div>
       )}
 
-      {/* Feature Toggles */}
+      {/* Site Settings */}
       <div className="bg-cosmic-teal/30 rounded-lg p-6 border border-nebula/20">
-        <h2 className="text-lg font-semibold text-starlight mb-4">Feature Toggles</h2>
+        <h2 className="text-lg font-semibold text-starlight mb-4">Site Settings</h2>
         <div className="space-y-4">
-          {settings.map(setting => (
-            <div
-              key={setting.key}
-              className="flex items-center justify-between py-3 border-b border-nebula/10 last:border-0"
-            >
-              <div className="flex-1">
-                <p className="text-starlight font-medium">{formatSettingName(setting.key)}</p>
-                <p className="text-sm text-starlight/60">{setting.description}</p>
-              </div>
-              <button
-                onClick={() => toggleSetting(setting.key, setting.value)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  setting.value === 'true' ? 'bg-nebula' : 'bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    setting.value === 'true' ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable Maintenance Mode</p>
+              <p className="text-sm text-starlight/60">
+                When enabled, only admins can access the site. All other users will see a maintenance screen.
+              </p>
             </div>
-          ))}
+            <button
+              onClick={() => toggleMaintenanceMode(!maintenance.enabled)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                maintenance.enabled ? 'bg-red-500' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  maintenance.enabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-starlight mb-2">
+              Maintenance Message
+            </label>
+            <textarea
+              value={maintenance.message}
+              onChange={(e) => updateMaintenanceMessage(e.target.value)}
+              className="w-full px-3 py-2 bg-deep-space/50 border border-nebula/20 rounded-lg text-starlight resize-none"
+              rows={3}
+              placeholder="Site is currently under maintenance. Please check back soon."
+            />
+            <p className="text-xs text-starlight/50 mt-1">
+              This message will be displayed to users on the maintenance page.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable Card Uploads</p>
+              <p className="text-sm text-starlight/60">
+                When enabled, users can upload cards to the site.
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('uploads_enabled', !siteSettings.uploadsEnabled, 'Card uploads')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.uploadsEnabled ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.uploadsEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Allow Anonymous Uploads</p>
+              <p className="text-sm text-starlight/60">
+                When enabled, users can upload cards without logging in.
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('allow_anon_uploads', !siteSettings.allowAnonUploads, 'Anonymous uploads')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.allowAnonUploads ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.allowAnonUploads ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable User Registration</p>
+              <p className="text-sm text-starlight/60">
+                When enabled, new users can create accounts.
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('registration_enabled', !siteSettings.registrationEnabled, 'User registration')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.registrationEnabled ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.registrationEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable Image Proxy</p>
+              <p className="text-sm text-starlight/60">
+                Proxy external images to bypass hotlink protection.
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('image_proxy_enabled', !siteSettings.imageProxyEnabled, 'Image proxy')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.imageProxyEnabled ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.imageProxyEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable Image Caching</p>
+              <p className="text-sm text-starlight/60">
+                Cache external images at upload time for faster loading.
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('image_cache_enabled', !siteSettings.imageCacheEnabled, 'Image caching')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.imageCacheEnabled ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.imageCacheEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -255,11 +448,4 @@ export default function AdminSettingsPage() {
       </div>
     </div>
   );
-}
-
-function formatSettingName(key: string): string {
-  return key
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
 }
