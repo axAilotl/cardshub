@@ -32,8 +32,8 @@ export async function POST(
 
     // Auth check - only owner or admin can trigger processing
     const session = await getSession();
-    const isOwner = session?.userId === card.uploader.id;
-    const isAdmin = session?.isAdmin;
+    const isOwner = session?.user.id === card.uploader?.id;
+    const isAdmin = session?.user.isAdmin ?? false;
 
     if (!isOwner && !isAdmin) {
       return NextResponse.json(
@@ -57,7 +57,7 @@ export async function POST(
     if (urlMapping.size > 0) {
       console.log(`[ProcessImages] Processed ${urlMapping.size} embedded images for card ${slug}`);
 
-      await updateCardVersion(card.headVersionId, {
+      await updateCardVersion(card.versionId, {
         cardData: displayData as Record<string, unknown>,
       });
 

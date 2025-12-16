@@ -5,7 +5,7 @@ import { isVoxta, readVoxta, voxtaToCCv3, enrichVoxtaAsset, type VoxtaData, type
 import { toUint8Array } from '@character-foundry/character-foundry/core';
 import { countCardTokens } from '@/lib/client/tokenizer';
 import { saveAssets } from '@/lib/image';
-import { processThumbnail, processCardImages } from '@/lib/image/process';
+import { processThumbnail } from '@/lib/image/process';
 import { generateId, generateSlug } from '@/lib/utils';
 import { store, getPublicUrl } from '@/lib/storage';
 import { getSession } from '@/lib/auth';

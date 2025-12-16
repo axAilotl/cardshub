@@ -706,6 +706,23 @@ export async function getCardVersionById(versionId: string): Promise<CardVersion
 }
 
 /**
+ * Update card version data (for async image processing)
+ * Note: This breaks version immutability but is needed for completing async uploads
+ */
+export async function updateCardVersion(
+  versionId: string,
+  updates: { cardData?: Record<string, unknown> }
+): Promise<void> {
+  const db = await getDb();
+
+  if (updates.cardData) {
+    await db.prepare(`
+      UPDATE card_versions SET card_data = ? WHERE id = ?
+    `).run(JSON.stringify(updates.cardData), versionId);
+  }
+}
+
+/**
  * Increment download count
  */
 export async function incrementDownloads(cardId: string): Promise<void> {
