@@ -221,7 +221,14 @@ export async function POST(request: NextRequest) {
       if (blockedTagNames.length > 0) {
         // Best-effort cleanup of pending uploads
         await r2.delete(files.original.r2Key);
-        await Promise.allSettled(files.thumbnails.map(t => r2.delete(t.r2Key)));
+        await inBatches(files.thumbnails, 4, async (t) => {
+          try {
+            await r2.delete(t.r2Key);
+          } catch (error) {
+            console.warn('[ConfirmUpload][Collection] Failed to delete pending thumbnail:', error);
+          }
+          return null;
+        });
         return NextResponse.json(
           {
             error: `Upload rejected: Collection contains blocked tags: ${blockedTagNames.join(', ')}`,
@@ -246,7 +253,14 @@ export async function POST(request: NextRequest) {
         if (existing) {
           // Best-effort cleanup of pending uploads
           await r2.delete(files.original.r2Key);
-          await Promise.allSettled(files.thumbnails.map(t => r2.delete(t.r2Key)));
+          await inBatches(files.thumbnails, 4, async (t) => {
+            try {
+              await r2.delete(t.r2Key);
+            } catch (error) {
+              console.warn('[ConfirmUpload][Collection] Failed to delete pending thumbnail:', error);
+            }
+            return null;
+          });
           return NextResponse.json(
             { error: `Package already uploaded: ${existing.slug}` },
             { status: 400 }
@@ -486,7 +500,14 @@ export async function POST(request: NextRequest) {
         await r2.delete(files.icon.r2Key);
       }
       if (files.assets && files.assets.length > 0) {
-        await Promise.allSettled(files.assets.map(a => r2.delete(a.r2Key)));
+        await inBatches(files.assets, 4, async (a) => {
+          try {
+            await r2.delete(a.r2Key);
+          } catch (error) {
+            console.warn('[ConfirmUpload] Failed to delete pending preview asset:', error);
+          }
+          return null;
+        });
       }
       return NextResponse.json(
         {
@@ -503,7 +524,14 @@ export async function POST(request: NextRequest) {
       const { isAssetPreviewsEnabled } = await import('@/lib/db/settings');
       const previewsAllowed = await isAssetPreviewsEnabled();
       if (!previewsAllowed) {
-        await Promise.allSettled(previewAssets.map((a) => r2.delete(a.r2Key)));
+        await inBatches(previewAssets, 4, async (a) => {
+          try {
+            await r2.delete(a.r2Key);
+          } catch (error) {
+            console.warn('[ConfirmUpload] Failed to delete preview asset (previews disabled):', error);
+          }
+          return null;
+        });
         previewAssets = [];
       }
     }
@@ -558,7 +586,8 @@ export async function POST(request: NextRequest) {
     const assetUrlMapping = new Map<string, string>();
 
     if (previewAssets.length > 0) {
-      const ASSET_MOVE_BATCH_SIZE = 10;
+      // Cloudflare Workers runtime limits: keep concurrency low to avoid "Response closed due to connection limit"
+      const ASSET_MOVE_BATCH_SIZE = 4;
       const results = await inBatches(previewAssets, ASSET_MOVE_BATCH_SIZE, async (asset) => {
         const assetObject = await r2.get(asset.r2Key);
         if (!assetObject?.body) return null;
