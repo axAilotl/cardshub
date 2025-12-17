@@ -5,15 +5,16 @@
 A platform for sharing, discovering, and managing AI character cards. Supports CCv2, CCv3, CharX, and Voxta formats.
 
 
-**Live DEMO WIPED OFTEN:** https://hub.axailotl.ai
+**Live DEMO (wiped often):** https://hub.axailotl.ai
 
 ## Features
 
 - **Multi-format support** - PNG, JSON, CharX (.charx), Voxta (.voxpkg)
-- **Full-text search** - FTS5-powered search with BM25 ranking
+- **Large uploads** - Direct-to-R2 uploads via presigned URLs (avoid Worker body limits)
+- **Full-text search** - Uses FTS when available (falls back when tables are missing)
 - **Tag system** - Auto-extracted from card data with include/exclude filtering
 - **User interactions** - Voting, favorites, comments, reporting
-- **Asset extraction** - Embedded images, audio, and custom assets from packages
+- **Asset previews (optional)** - Sample preview assets for cards with large packages (admin gated)
 - **Admin panel** - Moderation, visibility controls, user management
 - **WebP thumbnails** - Cloudflare Image Transformations for optimized delivery
 - **Personalized feed** - Content from followed users and tags, plus trending
@@ -27,7 +28,7 @@ A platform for sharing, discovering, and managing AI character cards. Supports C
 - **Storage:** Local filesystem / Cloudflare R2
 - **Auth:** Cookie-based sessions with bcrypt
 - **Validation:** Zod schemas
-- **Testing:** Vitest (289 tests)
+- **Testing:** Vitest
 - **Styling:** Tailwind CSS v4
 
 ## Quick Start
@@ -40,7 +41,7 @@ npm install
 npm run db:reset
 
 # Start dev server
-npm run dev
+npm run dev # runs on http://localhost:3001
 ```
 
 ## Deployment
@@ -57,6 +58,9 @@ npm run cf:d1:migrate
 
 # Create R2 bucket (first time)
 npm run cf:r2:create
+
+# Deploy dev environment
+npm run cf:deploy:dev
 ```
 
 ### Environment Variables
@@ -78,6 +82,22 @@ CLOUDFLARE_ACCOUNT_ID=xxx      # Account ID for R2 S3 endpoint
 
 # Optional
 NEXT_PUBLIC_APP_URL=https://your-domain.com
+```
+
+### R2 CORS (browser uploads)
+
+Presigned uploads are **cross-origin** `PUT`s from your site → the R2 S3 endpoint. Configure the bucket CORS rules to allow your origins and `PUT`.
+
+Example:
+
+```json
+[{
+  "AllowedOrigins": ["http://localhost:3000", "http://localhost:3001", "https://hub-dev.axailotl.ai"],
+  "AllowedMethods": ["GET", "HEAD", "PUT", "POST"],
+  "AllowedHeaders": ["*"],
+  "ExposeHeaders": ["ETag"],
+  "MaxAgeSeconds": 3600
+}]
 ```
 
 ## Scripts
@@ -118,13 +138,36 @@ Schema changes in `schema.sql` are NOT auto-applied to D1. Run migrations manual
 npx wrangler d1 execute cardshub-db --remote --command "ALTER TABLE cards ADD COLUMN new_column TEXT"
 ```
 
+### D1_ERROR: no such table: cards_fts / collections_fts
+Some older D1 databases were created without the FTS virtual tables. Create + backfill them:
+
+```bash
+# Dev D1 (recommended first)
+npx wrangler d1 execute cardshub-db-dev --env dev --remote --command "CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(card_id UNINDEXED, name, description, creator, creator_notes, tokenize='porter unicode61 remove_diacritics 1')"
+npx wrangler d1 execute cardshub-db-dev --env dev --remote --command "CREATE VIRTUAL TABLE IF NOT EXISTS collections_fts USING fts5(collection_id UNINDEXED, name, description, creator, tokenize='porter unicode61 remove_diacritics 1')"
+npx wrangler d1 execute cardshub-db-dev --env dev --remote --command "DELETE FROM cards_fts; INSERT INTO cards_fts(card_id, name, description, creator, creator_notes) SELECT id, name, COALESCE(description,''), COALESCE(creator,''), COALESCE(creator_notes,'') FROM cards"
+npx wrangler d1 execute cardshub-db-dev --env dev --remote --command "DELETE FROM collections_fts; INSERT INTO collections_fts(collection_id, name, description, creator) SELECT id, name, COALESCE(description,''), COALESCE(creator,'') FROM collections"
+```
+
 ### API works locally but fails on Cloudflare
 - Don't use generated columns in queries (use inline calculations)
-- Don't use FTS5 (falls back to LIKE on D1)
 - Check if schema was migrated to D1
 
 ### Push doesn't update production
 Deployment is manual: `npm run cf:build && npm run cf:deploy`
+
+### Tests fail with missing fixtures
+Some test suites require the golden fixtures directory. Either set it:
+
+```bash
+export CF_FIXTURES_DIR=/path/to/fixtures
+```
+
+…or skip those suites:
+
+```bash
+CF_ALLOW_MISSING_FIXTURES=1 npm run test:run
+```
 
 ### Browser crashes with `createRequire is not a function`
 Update `@character-foundry/*` packages - older versions bundled fflate's Node.js code:
