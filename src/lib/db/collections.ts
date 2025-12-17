@@ -13,6 +13,22 @@ import type {
 } from '@/types/collection';
 import type { CardListItem, PaginatedResponse } from '@/types/card';
 
+let cachedCollectionsFtsAvailable = false;
+async function isCollectionsFtsAvailableAsync(db: Awaited<ReturnType<typeof getDatabase>>): Promise<boolean> {
+  if (cachedCollectionsFtsAvailable) return true;
+
+  try {
+    const row = await db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collections_fts' LIMIT 1`)
+      .get<{ sql: string }>();
+    const available = !!row?.sql && /fts5/i.test(row.sql);
+    if (available) cachedCollectionsFtsAvailable = true;
+    return available;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Get a collection by slug
  */
@@ -346,16 +362,23 @@ export async function createCollection(input: CreateCollectionInput): Promise<st
     now
   );
 
-  // Add to FTS index
-  await db.prepare(`
-    INSERT INTO collections_fts (collection_id, name, description, creator)
-    VALUES (?, ?, ?, ?)
-  `).run(
-    input.id,
-    input.name,
-    input.description || '',
-    input.creator || ''
-  );
+  // Add to FTS index (optional)
+  try {
+    const ftsAvailable = await isCollectionsFtsAvailableAsync(db);
+    if (ftsAvailable) {
+      await db.prepare(`
+        INSERT INTO collections_fts (collection_id, name, description, creator)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        input.id,
+        input.name,
+        input.description || '',
+        input.creator || ''
+      );
+    }
+  } catch (error) {
+    console.debug('[FTS] collections insert skipped:', error);
+  }
 
   return input.id;
 }
@@ -435,16 +458,23 @@ export async function updateCollection(
       SELECT name, description, creator FROM collections WHERE id = ?
     `).get(id) as { name: string; description: string | null; creator: string | null };
 
-    await db.prepare(`
-      UPDATE collections_fts
-      SET name = ?, description = ?, creator = ?
-      WHERE collection_id = ?
-    `).run(
-      updates.name ?? current.name,
-      updates.description ?? current.description ?? '',
-      updates.creator ?? current.creator ?? '',
-      id
-    );
+    try {
+      const ftsAvailable = await isCollectionsFtsAvailableAsync(db);
+      if (ftsAvailable) {
+        await db.prepare(`
+          UPDATE collections_fts
+          SET name = ?, description = ?, creator = ?
+          WHERE collection_id = ?
+        `).run(
+          updates.name ?? current.name,
+          updates.description ?? current.description ?? '',
+          updates.creator ?? current.creator ?? '',
+          id
+        );
+      }
+    } catch (error) {
+      console.debug('[FTS] collections update skipped:', error);
+    }
   }
 }
 
@@ -476,8 +506,15 @@ export async function deleteCollection(id: string): Promise<void> {
     UPDATE cards SET collection_id = NULL, collection_item_id = NULL WHERE collection_id = ?
   `).run(id);
 
-  // Delete from FTS index
-  await db.prepare(`DELETE FROM collections_fts WHERE collection_id = ?`).run(id);
+  // Delete from FTS index (optional)
+  try {
+    const ftsAvailable = await isCollectionsFtsAvailableAsync(db);
+    if (ftsAvailable) {
+      await db.prepare(`DELETE FROM collections_fts WHERE collection_id = ?`).run(id);
+    }
+  } catch (error) {
+    console.debug('[FTS] collections delete skipped:', error);
+  }
 
   // Then delete the collection
   await db.prepare(`DELETE FROM collections WHERE id = ?`).run(id);
