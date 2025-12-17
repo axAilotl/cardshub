@@ -257,10 +257,9 @@ export async function POST(request: NextRequest) {
       const collectionId = generateId();
       const collectionSlug = await generateCollectionSlug(collection.name);
 
-      // Move original .voxpkg to permanent collection location
-      const permanentOriginalKey = `collections/${collectionId}.voxpkg`;
-      await moveR2Object(r2, files.original.r2Key, permanentOriginalKey);
-      const storageUrl = `r2://${permanentOriginalKey}`;
+      // IMPORTANT: Do not "move" large originals inside the Worker (that would stream the full
+      // object through the runtime). For presigned uploads, the original already lives in R2.
+      const storageUrl = `r2://${files.original.r2Key}`;
 
       // Collections don't support 'private' - map it to unlisted
       const collectionVisibility = visibility === 'private' ? 'unlisted' : visibility;
@@ -450,10 +449,9 @@ export async function POST(request: NextRequest) {
     const extMatch = files.original.r2Key.match(/\.([^.]+)$/);
     const ext = extMatch ? `.${extMatch[1]}` : '.bin';
 
-    // Move original file to permanent location
-    const permanentOriginalKey = `cards/${cardId}${ext}`;
-    await moveR2Object(r2, files.original.r2Key, permanentOriginalKey);
-    const storageUrl = `r2://${permanentOriginalKey}`;
+    // IMPORTANT: Do not "move" large originals inside the Worker (that would stream the full
+    // object through the runtime). For presigned uploads, the original already lives in R2.
+    const storageUrl = `r2://${files.original.r2Key}`;
 
     // IMPORTANT: Avoid re-downloading large uploads back into the Worker.
     // We accept client-extracted metadata (the upload UI parses locally) and only do cheap server checks.
@@ -473,6 +471,42 @@ export async function POST(request: NextRequest) {
     }
 
     const validatedMetadata = metadata;
+
+    // Validate tags early (before moving/copying any assets)
+    const allTags = [...new Set(validatedMetadata.tags)];
+    const allTagSlugs = allTags.map(tag =>
+      tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    );
+
+    const blockedTagNames = await checkBlockedTags(allTagSlugs);
+    if (blockedTagNames.length > 0) {
+      // Best-effort cleanup of pending uploads
+      await r2.delete(files.original.r2Key);
+      if (files.icon) {
+        await r2.delete(files.icon.r2Key);
+      }
+      if (files.assets && files.assets.length > 0) {
+        await Promise.allSettled(files.assets.map(a => r2.delete(a.r2Key)));
+      }
+      return NextResponse.json(
+        {
+          error: `Upload rejected: Card contains blocked tags: ${blockedTagNames.join(', ')}`,
+          blockedTags: blockedTagNames,
+        },
+        { status: 400 }
+      );
+    }
+
+    // Gate preview assets behind a feature flag. If disabled, delete any uploaded previews and ignore them.
+    let previewAssets = files.assets || [];
+    if (previewAssets.length > 0) {
+      const { isAssetPreviewsEnabled } = await import('@/lib/db/settings');
+      const previewsAllowed = await isAssetPreviewsEnabled();
+      if (!previewsAllowed) {
+        await Promise.allSettled(previewAssets.map((a) => r2.delete(a.r2Key)));
+        previewAssets = [];
+      }
+    }
 
     // Process icon if provided
     let imagePath: string | null = null;
@@ -523,35 +557,43 @@ export async function POST(request: NextRequest) {
     const savedAssetsData: Array<{ name: string; type: string; ext: string; path: string; thumbnailPath?: string }> = [];
     const assetUrlMapping = new Map<string, string>();
 
-    if (files.assets && files.assets.length > 0) {
-      for (const asset of files.assets) {
+    if (previewAssets.length > 0) {
+      const ASSET_MOVE_BATCH_SIZE = 10;
+      const results = await inBatches(previewAssets, ASSET_MOVE_BATCH_SIZE, async (asset) => {
         const assetObject = await r2.get(asset.r2Key);
-        if (assetObject?.body) {
-          // Move asset to permanent, public location
-          const permanentAssetKey = `assets/${cardId}/${asset.name}.${asset.ext}`;
-          await r2.put(permanentAssetKey, assetObject.body, {
-            httpMetadata: assetObject.httpMetadata,
-            customMetadata: assetObject.customMetadata,
-          });
-          await r2.delete(asset.r2Key);
+        if (!assetObject?.body) return null;
 
-          const savedPath = `/api/uploads/${permanentAssetKey}`;
-          savedAssetsData.push({
+        // Move asset to permanent, public location
+        const permanentAssetKey = `assets/${cardId}/${asset.name}.${asset.ext}`;
+        await r2.put(permanentAssetKey, assetObject.body, {
+          httpMetadata: assetObject.httpMetadata,
+          customMetadata: assetObject.customMetadata,
+        });
+        await r2.delete(asset.r2Key);
+
+        const savedPath = `/api/uploads/${permanentAssetKey}`;
+        return {
+          savedAsset: {
             name: asset.name,
             type: asset.type,
             ext: asset.ext,
             path: savedPath,
-          });
+          },
+          mappings: asset.originalPath
+            ? [
+                [`embeded://${asset.originalPath}`, savedPath],
+                [`ccdefault://${asset.originalPath}`, savedPath],
+                [asset.originalPath, savedPath],
+              ]
+            : [],
+        } as const;
+      });
 
-          // Build URL mapping from internal paths to saved paths
-          // CharX uses paths like "embeded://assets/icon/main.png" or "ccdefault://assets/..."
-          if (asset.originalPath) {
-            // Map various internal URL schemes to the saved path
-            assetUrlMapping.set(`embeded://${asset.originalPath}`, savedPath);
-            assetUrlMapping.set(`ccdefault://${asset.originalPath}`, savedPath);
-            // Also map relative paths
-            assetUrlMapping.set(asset.originalPath, savedPath);
-          }
+      for (const r of results) {
+        if (!r) continue;
+        savedAssetsData.push(r.savedAsset);
+        for (const [from, to] of r.mappings) {
+          assetUrlMapping.set(from, to);
         }
       }
     }
@@ -565,29 +607,6 @@ export async function POST(request: NextRequest) {
         processedCardData = processedCardData.replace(new RegExp(escaped, 'g'), newUrl);
       }
       console.log(`[ConfirmUpload] Rewrote ${assetUrlMapping.size} asset URLs in cardData`);
-    }
-
-    // Validate tags
-    const allTags = [...new Set(validatedMetadata.tags)];
-    const allTagSlugs = allTags.map(tag =>
-      tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    );
-
-    // Check for blocked tags
-    const blockedTagNames = await checkBlockedTags(allTagSlugs);
-    if (blockedTagNames.length > 0) {
-      // Clean up uploaded files
-      await r2.delete(permanentOriginalKey);
-      if (imagePath) {
-        await r2.delete(`${cardId}.png`);
-      }
-      return NextResponse.json(
-        {
-          error: `Upload rejected: Card contains blocked tags: ${blockedTagNames.join(', ')}`,
-          blockedTags: blockedTagNames,
-        },
-        { status: 400 }
-      );
     }
 
     // Create card record
@@ -649,24 +668,20 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Move an R2 object from one key to another
- * R2 doesn't have native move, so we copy + delete
+ * Run async work in limited-size batches (simple concurrency limiter)
  */
-async function moveR2Object(
-  r2: Awaited<ReturnType<typeof getR2>>,
-  sourceKey: string,
-  destKey: string
-): Promise<void> {
-  if (!r2) throw new Error('R2 not available');
-
-  const object = await r2.get(sourceKey);
-  if (!object) throw new Error(`Source object not found: ${sourceKey}`);
-  if (!object.body) throw new Error(`Source object missing body: ${sourceKey}`);
-
-  await r2.put(destKey, object.body, {
-    httpMetadata: object.httpMetadata,
-    customMetadata: object.customMetadata,
-  });
-
-  await r2.delete(sourceKey);
+async function inBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  work: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map((item, batchIndex) => work(item, i + batchIndex)));
+    for (let j = 0; j < batchResults.length; j++) {
+      results[i + j] = batchResults[j];
+    }
+  }
+  return results;
 }

@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS cards (
   head_version_id TEXT,
 
   -- Visibility and moderation state
-  visibility TEXT DEFAULT 'public' CHECK (visibility IN ('public', 'nsfw_only', 'unlisted', 'blocked')),
+  visibility TEXT DEFAULT 'public' CHECK (visibility IN ('public', 'private', 'nsfw_only', 'unlisted', 'blocked')),
   moderation_state TEXT DEFAULT 'ok' CHECK (moderation_state IN ('ok', 'review', 'blocked')),
 
   -- Stats (denormalized for performance)
@@ -333,6 +333,7 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 INSERT OR IGNORE INTO admin_settings (key, value, description) VALUES
   ('image_proxy_enabled', 'true', 'Enable image proxy for external images (bypass hotlink protection)'),
   ('image_cache_enabled', 'true', 'Cache external images at upload time'),
+  ('asset_previews_enabled', 'false', 'Enable uploading sample preview assets for large packages'),
   ('registration_enabled', 'true', 'Allow new user registration'),
   ('uploads_enabled', 'true', 'Allow card uploads'),
   ('allow_anon_uploads', 'false', 'Allow anonymous users to upload cards without logging in'),

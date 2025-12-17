@@ -94,6 +94,18 @@ export async function POST(request: NextRequest) {
 
     const { sessionId, files } = parsed.data;
 
+    // Gate preview asset uploads behind an admin feature flag
+    if (files.some((f) => f.key.startsWith('asset-'))) {
+      const { isAssetPreviewsEnabled } = await import('@/lib/db/settings');
+      const previewsAllowed = await isAssetPreviewsEnabled();
+      if (!previewsAllowed) {
+        return NextResponse.json(
+          { error: 'Asset preview uploads are currently disabled' },
+          { status: 403 }
+        );
+      }
+    }
+
     // Check total size doesn't exceed reasonable limit
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
     const MAX_TOTAL_SIZE = 1024 * 1024 * 1024; // 1GB total per session

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout';
 import { Button, Badge } from '@/components/ui';
@@ -51,6 +51,32 @@ export default function UploadPage() {
   const [visibility, setVisibility] = useState<CardVisibility>('public');
   const [usePresigned] = useState<boolean>(true);
   const [currentUploadFile, setCurrentUploadFile] = useState<string | null>(null);
+  const [assetPreviewsEnabled, setAssetPreviewsEnabled] = useState<boolean>(false);
+  const [includeAssetPreviews, setIncludeAssetPreviews] = useState<boolean>(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/config/features');
+        if (!res.ok) return;
+        const data = (await res.json()) as { assetPreviewsEnabled?: boolean };
+        if (cancelled) return;
+        const enabled = !!data.assetPreviewsEnabled;
+        setAssetPreviewsEnabled(enabled);
+        if (!enabled) setIncludeAssetPreviews(false);
+      } catch {
+        // Ignore - fail closed (treat as disabled)
+        if (!cancelled) {
+          setAssetPreviewsEnabled(false);
+          setIncludeAssetPreviews(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -167,11 +193,18 @@ export default function UploadPage() {
       if (usePresigned) {
         const { uploadWithPresignedUrls } = await getPresignedUpload();
 
+        const shouldIncludeAssetPreviews =
+          assetPreviewsEnabled &&
+          includeAssetPreviews &&
+          !parseState.result.isMultiCharPackage &&
+          (parseState.result.extractedAssets?.length || 0) > 0;
+
         const result = await uploadWithPresignedUrls(
           file,
           parseState.result,
           visibility,
           contentHash,
+          { includeAssetPreviews: shouldIncludeAssetPreviews },
           (progress) => {
             switch (progress.stage) {
               case 'presigning':
@@ -316,6 +349,7 @@ export default function UploadPage() {
   };
 
   const parsedCard = parseState.result?.card;
+  const hasPreviewAssets = (parseState.result?.extractedAssets?.length || 0) > 0 && !parseState.result?.isMultiCharPackage;
 
   return (
     <AppShell>
@@ -534,6 +568,34 @@ export default function UploadPage() {
                 </label>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Preview asset upload options */}
+        {file && parseState.status === 'parsed' && assetPreviewsEnabled && hasPreviewAssets && (
+          <div className="mt-6 glass rounded-xl p-4">
+            <h3 className="font-semibold text-starlight mb-3">Asset Previews</h3>
+
+            <label className="flex items-start gap-3 p-3 rounded-lg bg-deep-space/30 border border-transparent hover:border-nebula/20 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeAssetPreviews}
+                onChange={(e) => setIncludeAssetPreviews(e.target.checked)}
+                className="mt-1"
+              />
+              <div>
+                <div className="font-medium text-starlight">Include preview assets (slower)</div>
+                <div className="text-sm text-starlight/60">
+                  Uploads a sample for the card page (up to 100 items or 100MB).
+                </div>
+              </div>
+            </label>
+
+            {includeAssetPreviews && (
+              <div className="mt-3 text-sm bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 text-amber-200/90">
+                Preview asset uploads can take a while. Please keep this tab open until the upload completes.
+              </div>
+            )}
           </div>
         )}
 

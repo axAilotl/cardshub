@@ -156,6 +156,11 @@ function isImageExt(ext: string): boolean {
   return e === 'png' || e === 'jpg' || e === 'jpeg' || e === 'webp' || e === 'gif';
 }
 
+function isVideoExt(ext: string): boolean {
+  const e = ext.toLowerCase();
+  return e === 'mp4' || e === 'webm';
+}
+
 function getExtFromPath(path: string): string {
   const lastDot = path.lastIndexOf('.');
   if (lastDot === -1) return '';
@@ -210,7 +215,7 @@ function sampleZipAssets(
 
     extracted.push({
       name,
-      type: isImageExt(ext) ? 'image' : 'asset',
+      type: isImageExt(ext) ? 'image' : isVideoExt(ext) ? 'video' : 'asset',
       ext: ext || 'bin',
       buffer,
       path: entry.name,
@@ -223,10 +228,15 @@ function sampleZipAssets(
 function parseCharxFromZip(zip: Uint8Array): ParseResultWithAssets {
   const entries = indexZip(zip);
 
-  const cardEntry = entries.find((e) => e.name === 'card.json');
+  const cardCandidates = entries.filter((e) => /(^|\/)card\.json$/i.test(e.name));
+  cardCandidates.sort((a, b) => a.name.split('/').length - b.name.split('/').length);
+  const cardEntry = cardCandidates[0];
   if (!cardEntry) {
     throw new Error('CharX: Missing card.json');
   }
+
+  const basePrefix = cardEntry.name.slice(0, cardEntry.name.length - 'card.json'.length);
+  const basePrefixLower = basePrefix.toLowerCase();
 
   const cardJson = extractZipEntry(zip, cardEntry);
   const raw = JSON.parse(new TextDecoder().decode(cardJson)) as CCv3Data;
@@ -235,16 +245,18 @@ function parseCharxFromZip(zip: Uint8Array): ParseResultWithAssets {
 
   // Main image: first icon-like asset
   const iconEntry = entries.find(
-    (e) => e.name.toLowerCase().startsWith('assets/icon/') && isImageExt(getExtFromPath(e.name))
+    (e) =>
+      e.name.toLowerCase().startsWith(`${basePrefixLower}assets/icon/`) &&
+      isImageExt(getExtFromPath(e.name))
   );
   const mainImage = iconEntry ? extractZipEntry(zip, iconEntry) : undefined;
 
   // Sample non-icon assets for preview
   const extractedAssets = sampleZipAssets(zip, entries, {
     include: (e) =>
-      e.name.toLowerCase().startsWith('assets/') &&
-      !e.name.toLowerCase().startsWith('assets/icon/') &&
-      isImageExt(getExtFromPath(e.name)),
+      e.name.toLowerCase().startsWith(`${basePrefixLower}assets/`) &&
+      !e.name.toLowerCase().startsWith(`${basePrefixLower}assets/icon/`) &&
+      (isImageExt(getExtFromPath(e.name)) || isVideoExt(getExtFromPath(e.name))),
     maxItems: 100,
     maxTotalBytes: 100 * 1024 * 1024,
   });
@@ -259,20 +271,30 @@ function parseCharxFromZip(zip: Uint8Array): ParseResultWithAssets {
 function parseVoxtaFromZip(zip: Uint8Array): ParseResultWithAssets {
   const entries = indexZip(zip);
 
-  const pkgEntry = entries.find((e) => e.name === 'package.json');
+  const pkgCandidates = entries.filter((e) => /(^|\/)package\.json$/i.test(e.name));
+  pkgCandidates.sort((a, b) => a.name.split('/').length - b.name.split('/').length);
+  const pkgEntry = pkgCandidates[0];
   const voxtaPackageJson = pkgEntry ? JSON.parse(new TextDecoder().decode(extractZipEntry(zip, pkgEntry))) : undefined;
 
-  const charEntries = entries.filter((e) => /^Characters\/[^/]+\/character\.json$/i.test(e.name));
+  const charEntries = entries.filter((e) => /(?:^|\/)Characters\/[^/]+\/character\.json$/i.test(e.name));
   if (charEntries.length === 0) {
     throw new Error('Voxta: No Characters/*/character.json entries found');
   }
 
   const voxtaCharacters: Array<{ id: string; card: ParsedCard; thumbnail?: Uint8Array }> = [];
+  let packageBasePrefixLower = '';
 
   for (const entry of charEntries) {
-    const match = /^Characters\/([^/]+)\/character\.json$/i.exec(entry.name);
+    const match = /(?:^|\/)Characters\/([^/]+)\/character\.json$/i.exec(entry.name);
     if (!match) continue;
     const id = match[1];
+
+    const lowerName = entry.name.toLowerCase();
+    const needle = `characters/${id.toLowerCase()}/character.json`;
+    const needleStart = lowerName.lastIndexOf(needle);
+    const basePrefix = needleStart === -1 ? '' : entry.name.slice(0, needleStart);
+    const basePrefixLower = basePrefix.toLowerCase();
+    if (!packageBasePrefixLower) packageBasePrefixLower = basePrefixLower;
 
     const jsonBytes = extractZipEntry(zip, entry);
     const voxtaChar = JSON.parse(new TextDecoder().decode(jsonBytes)) as unknown;
@@ -282,7 +304,7 @@ function parseVoxtaFromZip(zip: Uint8Array): ParseResultWithAssets {
 
     const thumbEntry = entries.find(
       (e) =>
-        e.name.toLowerCase().startsWith(`characters/${id.toLowerCase()}/thumbnail.`) &&
+        e.name.toLowerCase().startsWith(`${basePrefixLower}characters/${id.toLowerCase()}/thumbnail.`) &&
         isImageExt(getExtFromPath(e.name))
     );
     const thumbnail = thumbEntry ? extractZipEntry(zip, thumbEntry) : undefined;
@@ -306,7 +328,8 @@ function parseVoxtaFromZip(zip: Uint8Array): ParseResultWithAssets {
     thumbCharId = voxtaCharacters[0].id;
   }
 
-  const previewChar = voxtaCharacters.find((c) => c.id === thumbCharId) || voxtaCharacters[0];
+  const previewChar =
+    voxtaCharacters.find((c) => c.id.toLowerCase() === thumbCharId?.toLowerCase()) || voxtaCharacters[0];
   const packageName = (pkg?.Name || `${voxtaCharacters.length} Characters`) as string;
 
   // Sample assets only for single-character packages
@@ -315,8 +338,8 @@ function parseVoxtaFromZip(zip: Uint8Array): ParseResultWithAssets {
         include: (e) => {
           const onlyId = voxtaCharacters[0].id.toLowerCase();
           return (
-            e.name.toLowerCase().startsWith(`characters/${onlyId}/assets/`) &&
-            isImageExt(getExtFromPath(e.name))
+            e.name.toLowerCase().startsWith(`${packageBasePrefixLower}characters/${onlyId}/assets/`) &&
+            (isImageExt(getExtFromPath(e.name)) || isVideoExt(getExtFromPath(e.name)))
           );
         },
         maxItems: 100,

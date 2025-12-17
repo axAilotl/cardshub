@@ -137,9 +137,11 @@ export async function uploadWithPresignedUrls(
   parseResult: ParseResultWithAssets,
   visibility: 'public' | 'private' | 'unlisted',
   contentHash: string,
+  options?: { includeAssetPreviews?: boolean },
   onProgress?: (progress: UploadProgress) => void
 ): Promise<PresignedUploadResult> {
   const sessionId = crypto.randomUUID();
+  const includeAssetPreviews = options?.includeAssetPreviews ?? true;
 
   try {
     // Special case: Voxta multi-character package -> create a collection
@@ -172,19 +174,16 @@ export async function uploadWithPresignedUrls(
     }
 
     // Prepare and (optionally) transcode extracted assets for preview
-    const preparedAssets: PreparedAsset[] = [];
-    if (parseResult.extractedAssets) {
-      for (const asset of parseResult.extractedAssets) {
-        preparedAssets.push({
+    const preparedAssets: PreparedAsset[] = includeAssetPreviews
+      ? (parseResult.extractedAssets || []).map((asset) => ({
           name: asset.name,
           type: asset.type,
           ext: asset.ext,
           originalPath: asset.path,
           buffer: asset.buffer,
           contentType: getContentType(asset.ext),
-        });
-      }
-    }
+        }))
+      : [];
 
     // Convert large PNG/JPEG/GIF previews to smaller WebP samples (client-side)
     const transcodedAssets: PreparedAsset[] = [];
@@ -239,22 +238,23 @@ export async function uploadWithPresignedUrls(
     }
 
     // Upload assets
-    for (let i = 0; i < transcodedAssets.length; i++) {
-      const asset = transcodedAssets[i];
-      const assetKey = `asset-${i}`;
+    const ASSET_UPLOAD_BATCH_SIZE = 10;
+    await uploadInBatches(transcodedAssets, ASSET_UPLOAD_BATCH_SIZE, async (asset, index) => {
+      const assetKey = `asset-${index}`;
       const assetUrl = presignData.urls[assetKey];
-      if (assetUrl) {
-        onProgress?.({
-          stage: 'uploading',
-          percent: Math.round((uploadedFiles / totalFiles) * 100),
-          currentFile: `${asset.name}.${asset.ext}`,
-        });
-        const assetBlob = new Blob([new Uint8Array(asset.buffer)], { type: asset.contentType });
-        await uploadToR2(assetUrl.uploadUrl, assetBlob, asset.contentType);
-        uploadedFiles++;
-        onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
-      }
-    }
+      if (!assetUrl) return;
+
+      onProgress?.({
+        stage: 'uploading',
+        percent: Math.round((uploadedFiles / totalFiles) * 100),
+        currentFile: `${asset.name}.${asset.ext}`,
+      });
+
+      const assetBlob = new Blob([new Uint8Array(asset.buffer)], { type: asset.contentType });
+      await uploadToR2(assetUrl.uploadUrl, assetBlob, asset.contentType);
+      uploadedFiles++;
+      onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
+    });
 
     // Stage 3: Confirm upload
     onProgress?.({ stage: 'confirming', percent: 0 });
@@ -382,22 +382,29 @@ async function uploadVoxtaCollectionWithPresignedUrls(
   onProgress?.({ stage: 'uploading', percent: 0, currentFile: file.name });
   await uploadToR2(presignData.urls.original.uploadUrl, file, getContentType(ext));
   uploadedFiles++;
+  onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
 
-  for (const c of characters) {
-    const urlKey = `thumb-${c.id}`;
-    const urlInfo = presignData.urls[urlKey];
-    if (!c.thumbnail || !urlInfo) continue;
+  const THUMB_UPLOAD_BATCH_SIZE = 10;
+  await uploadInBatches(
+    characters.filter((c) => !!c.thumbnail && !!presignData.urls[`thumb-${c.id}`]),
+    THUMB_UPLOAD_BATCH_SIZE,
+    async (c) => {
+      const urlKey = `thumb-${c.id}`;
+      const urlInfo = presignData.urls[urlKey];
+      if (!c.thumbnail || !urlInfo) return;
 
-    onProgress?.({
-      stage: 'uploading',
-      percent: Math.round((uploadedFiles / totalFiles) * 100),
-      currentFile: `thumb-${c.id}.png`,
-    });
+      onProgress?.({
+        stage: 'uploading',
+        percent: Math.round((uploadedFiles / totalFiles) * 100),
+        currentFile: `thumb-${c.id}.png`,
+      });
 
-    const blob = new Blob([new Uint8Array(c.thumbnail)], { type: 'image/png' });
-    await uploadToR2(urlInfo.uploadUrl, blob, 'image/png');
-    uploadedFiles++;
-  }
+      const blob = new Blob([new Uint8Array(c.thumbnail)], { type: 'image/png' });
+      await uploadToR2(urlInfo.uploadUrl, blob, 'image/png');
+      uploadedFiles++;
+      onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
+    }
+  );
 
   onProgress?.({ stage: 'uploading', percent: 100 });
 
@@ -499,6 +506,17 @@ async function uploadToR2(url: string, data: File | Blob, contentType: string): 
   }
 }
 
+async function uploadInBatches<T>(
+  items: T[],
+  batchSize: number,
+  upload: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map((item, batchIndex) => upload(item, i + batchIndex)));
+  }
+}
+
 /**
  * Get content type from file extension
  */
@@ -515,6 +533,8 @@ function getContentType(ext: string): string {
     mp3: 'audio/mpeg',
     ogg: 'audio/ogg',
     wav: 'audio/wav',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
   };
   return types[ext.toLowerCase()] || 'application/octet-stream';
 }

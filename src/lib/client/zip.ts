@@ -41,9 +41,8 @@ function u32(view: DataView, offset: number): number {
 
 function findEndOfCentralDirectory(buffer: Uint8Array): number {
   // EOCD is at least 22 bytes, and comment length can be up to 65535.
-  const maxSearch = Math.min(buffer.length - 22, 22 + 0xffff);
   const start = buffer.length - 22;
-  const min = Math.max(0, buffer.length - maxSearch);
+  const min = Math.max(0, buffer.length - (22 + 0xffff));
 
   for (let i = start; i >= min; i--) {
     if (
@@ -73,11 +72,33 @@ export function indexZip(buffer: Uint8Array): ZipEntry[] {
 
   const totalEntries = u16(view, eocdOffset + 10);
   const centralDirSize = u32(view, eocdOffset + 12);
-  const centralDirOffset = u32(view, eocdOffset + 16);
+  const centralDirOffsetRaw = u32(view, eocdOffset + 16);
 
   // ZIP64 not supported in this minimal reader.
-  if (totalEntries === 0xffff || centralDirSize === 0xffffffff || centralDirOffset === 0xffffffff) {
+  if (totalEntries === 0xffff || centralDirSize === 0xffffffff || centralDirOffsetRaw === 0xffffffff) {
     throw new Error('ZIP64 is not supported');
+  }
+
+  // Some malformed/SFX-like archives store offsets relative to the start of the ZIP payload rather
+  // than the start of the file. When that happens, EOCD's `centralDirOffset` and each entry's
+  // `localHeaderOffset` are too small by a constant "base" prefix length.
+  //
+  // We detect this by validating that the central directory actually starts with `PK\x01\x02`.
+  // If not, fall back to the central directory ending right before EOCD (`eocdOffset - cdSize`)
+  // and compute a base offset correction.
+  const isCentralDirAt = (offset: number): boolean =>
+    offset >= 0 && offset + 4 <= buffer.length && u32(view, offset) === CEN_SIGNATURE;
+
+  let centralDirOffset = centralDirOffsetRaw;
+  let baseOffset = 0;
+
+  if (!isCentralDirAt(centralDirOffsetRaw)) {
+    const altOffset = eocdOffset - centralDirSize;
+    if (!isCentralDirAt(altOffset)) {
+      throw new Error('ZIP: Central directory not found at expected offset');
+    }
+    baseOffset = altOffset - centralDirOffsetRaw;
+    centralDirOffset = altOffset;
   }
 
   const entries: ZipEntry[] = [];
@@ -94,7 +115,7 @@ export function indexZip(buffer: Uint8Array): ZipEntry[] {
     const fileNameLength = u16(view, cursor + 28);
     const extraLength = u16(view, cursor + 30);
     const commentLength = u16(view, cursor + 32);
-    const localHeaderOffset = u32(view, cursor + 42);
+    const localHeaderOffset = u32(view, cursor + 42) + baseOffset;
 
     const nameStart = cursor + 46;
     const nameEnd = nameStart + fileNameLength;

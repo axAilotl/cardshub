@@ -27,6 +27,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       gif: 'image/gif',
       webp: 'image/webp',
       json: 'application/json',
+      mp4: 'video/mp4',
+      webm: 'video/webm',
     };
     const contentType = contentTypes[ext || ''] || 'application/octet-stream';
 

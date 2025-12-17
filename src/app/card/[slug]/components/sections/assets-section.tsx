@@ -17,6 +17,7 @@ interface NormalizedAsset {
   path: string; // URL path to view/download (full size)
   thumbnailPath?: string; // URL path to thumbnail (for preview)
   isImage: boolean;
+  isVideo: boolean;
 }
 
 function getAssetTypeLabel(type: string): string {
@@ -58,6 +59,10 @@ function isImageExtension(ext: string): boolean {
   return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp'].includes(ext.toLowerCase());
 }
 
+function isVideoExtension(ext: string): boolean {
+  return ['mp4', 'webm'].includes(ext.toLowerCase());
+}
+
 function normalizeAssets(assets?: CharacterAsset[], savedAssets?: SavedAssetInfo[] | null): NormalizedAsset[] {
   const result: NormalizedAsset[] = [];
 
@@ -71,6 +76,7 @@ function normalizeAssets(assets?: CharacterAsset[], savedAssets?: SavedAssetInfo
         path: asset.path,
         thumbnailPath: asset.thumbnailPath,
         isImage: isImageExtension(asset.ext),
+        isVideo: isVideoExtension(asset.ext),
       });
     }
     return result;
@@ -86,6 +92,7 @@ function normalizeAssets(assets?: CharacterAsset[], savedAssets?: SavedAssetInfo
         ext: ext,
         path: asset.uri,
         isImage: asset.uri.startsWith('data:image/') || isImageExtension(ext),
+        isVideo: asset.uri.startsWith('data:video/') || isVideoExtension(ext),
       });
     }
   }
@@ -111,6 +118,12 @@ export function AssetsSection({ assets, savedAssets }: AssetsSectionProps) {
           Assets ({normalizedAssets.length})
         </h2>
       </div>
+
+      {savedAssets && savedAssets.length > 0 && (
+        <p className="text-sm text-starlight/60">
+          These are sample preview assets from the uploaded package (up to 100 items or 100MB), not necessarily the full set.
+        </p>
+      )}
 
       {normalizedAssets.length === 0 ? (
         <p className="text-starlight/50 italic">No assets available.</p>
@@ -201,6 +214,13 @@ export function AssetsSection({ assets, savedAssets }: AssetsSectionProps) {
                           />
                         )}
                       </div>
+                    ) : selectedAsset.isVideo ? (
+                      <video
+                        className="max-w-full max-h-[300px] rounded"
+                        controls
+                        preload="metadata"
+                        src={selectedAsset.path}
+                      />
                     ) : (
                       <div className="text-center text-starlight/50">
                         <svg className="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
