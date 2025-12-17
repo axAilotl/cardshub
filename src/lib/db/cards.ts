@@ -1,4 +1,4 @@
-import { type CardVersionRow, type CardWithVersionRow, type TagRow, isCloudflareRuntime } from './index';
+import { type CardVersionRow, type CardWithVersionRow, type TagRow } from './index';
 import { getDatabase } from './async-db';
 import type { CardListItem, CardDetail, CardFilters, PaginatedResponse } from '@/types/card';
 import { createHash } from 'crypto';
@@ -30,6 +30,22 @@ async function removeFtsIndexAsync(cardId: string): Promise<void> {
     await removeFtsIndex(cardId);
   } catch (error) {
     console.error('[FTS] Failed to remove index:', error);
+  }
+}
+
+let cachedCardsFtsAvailable: boolean | null = null;
+async function isCardsFtsAvailableAsync(db: Awaited<ReturnType<typeof getDb>>): Promise<boolean> {
+  if (cachedCardsFtsAvailable !== null) return cachedCardsFtsAvailable;
+
+  try {
+    const row = await db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards_fts' LIMIT 1`)
+      .get<{ sql: string }>();
+    cachedCardsFtsAvailable = !!row?.sql && /fts5/i.test(row.sql);
+    return cachedCardsFtsAvailable;
+  } catch {
+    cachedCardsFtsAvailable = false;
+    return false;
   }
 }
 
@@ -85,8 +101,8 @@ export async function getCards(filters: CardFilters = {}, userId?: string): Prom
   let useFts = false;
   if (search && search.trim()) {
     const searchTerm = search.trim();
-    const canUseFts = !isCloudflareRuntime(); // D1 doesn't support FTS5
-    if (canUseFts && searchTerm.length >= 2) {
+    const ftsAvailable = await isCardsFtsAvailableAsync(db);
+    if (ftsAvailable && searchTerm.length >= 2) {
       useFts = true;
       const ftsQuery = searchTerm
         .replace(/[\"\']/g, '')
