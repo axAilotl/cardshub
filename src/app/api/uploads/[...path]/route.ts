@@ -27,6 +27,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       gif: 'image/gif',
       webp: 'image/webp',
       json: 'application/json',
+      mp4: 'video/mp4',
+      webm: 'video/webm',
     };
     const contentType = contentTypes[ext || ''] || 'application/octet-stream';
 
@@ -80,15 +82,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         return NextResponse.json({ error: 'File not found' }, { status: 404 });
       }
 
-      const data = await object.arrayBuffer();
+      if (!object.body) {
+        return NextResponse.json({ error: 'Failed to stream file' }, { status: 500 });
+      }
 
-      return new NextResponse(data, {
+      // Cloudflare's `@cloudflare/workers-types` declares its own ReadableStream type which isn't
+      // assignable to the DOM lib ReadableStream type NextResponse expects. Runtime-compatible.
+      return new NextResponse(object.body as unknown as ReadableStream<Uint8Array>, {
         headers: {
           'Content-Type': contentType,
           'Cache-Control': meta?.visibility === 'private'
             ? 'private, max-age=0, no-store'
             : 'public, max-age=31536000, immutable',
-          'Content-Length': data.byteLength.toString(),
+          ...(typeof object.size === 'number' ? { 'Content-Length': object.size.toString() } : {}),
         },
       });
     }

@@ -11,8 +11,10 @@ import { getDatabase } from './async-db';
 export const SETTING_KEYS = {
   IMAGE_PROXY_ENABLED: 'image_proxy_enabled',
   IMAGE_CACHE_ENABLED: 'image_cache_enabled',
+  ASSET_PREVIEWS_ENABLED: 'asset_previews_enabled',
   REGISTRATION_ENABLED: 'registration_enabled',
   UPLOADS_ENABLED: 'uploads_enabled',
+  ALLOW_ANON_UPLOADS: 'allow_anon_uploads',
   MAINTENANCE_MODE: 'maintenance_mode',
 } as const;
 
@@ -124,12 +126,20 @@ export async function isImageCacheEnabled(): Promise<boolean> {
   return getBooleanSetting(SETTING_KEYS.IMAGE_CACHE_ENABLED);
 }
 
+export async function isAssetPreviewsEnabled(): Promise<boolean> {
+  return getBooleanSetting(SETTING_KEYS.ASSET_PREVIEWS_ENABLED);
+}
+
 export async function isRegistrationEnabled(): Promise<boolean> {
   return getBooleanSetting(SETTING_KEYS.REGISTRATION_ENABLED);
 }
 
 export async function isUploadsEnabled(): Promise<boolean> {
   return getBooleanSetting(SETTING_KEYS.UPLOADS_ENABLED);
+}
+
+export async function isAnonUploadsEnabled(): Promise<boolean> {
+  return getBooleanSetting(SETTING_KEYS.ALLOW_ANON_UPLOADS);
 }
 
 export async function isMaintenanceMode(): Promise<boolean> {

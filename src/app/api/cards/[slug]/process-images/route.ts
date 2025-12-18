@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCardBySlug, updateCardVersion } from '@/lib/db/cards';
 import { processCardImages } from '@/lib/image/process';
 import { getSession } from '@/lib/auth';
+import { invalidateCardCache } from '@/lib/cache/kv-cache';
 
 interface RouteParams {
   params: Promise<{ slug: string }>;
@@ -60,6 +61,9 @@ export async function POST(
       await updateCardVersion(card.versionId, {
         cardData: displayData as Record<string, unknown>,
       });
+
+      // Ensure clients see updated cardData (bust cached card + listings)
+      await invalidateCardCache(slug);
 
       return NextResponse.json({
         success: true,

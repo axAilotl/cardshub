@@ -19,6 +19,7 @@ interface MaintenanceMode {
 interface SiteSettings {
   uploadsEnabled: boolean;
   allowAnonUploads: boolean;
+  assetPreviewsEnabled: boolean;
   registrationEnabled: boolean;
   imageProxyEnabled: boolean;
   imageCacheEnabled: boolean;
@@ -30,6 +31,7 @@ export default function AdminSettingsPage() {
   const [siteSettings, setSiteSettings] = useState<SiteSettings>({
     uploadsEnabled: true,
     allowAnonUploads: false,
+    assetPreviewsEnabled: false,
     registrationEnabled: true,
     imageProxyEnabled: true,
     imageCacheEnabled: true,
@@ -57,6 +59,7 @@ export default function AdminSettingsPage() {
       setSiteSettings({
         uploadsEnabled: getSetting('uploads_enabled'),
         allowAnonUploads: getSetting('allow_anon_uploads'),
+        assetPreviewsEnabled: getSetting('asset_previews_enabled'),
         registrationEnabled: getSetting('registration_enabled'),
         imageProxyEnabled: getSetting('image_proxy_enabled'),
         imageCacheEnabled: getSetting('image_cache_enabled'),
@@ -130,6 +133,7 @@ export default function AdminSettingsPage() {
         ...prev,
         ...(key === 'uploads_enabled' && { uploadsEnabled: enabled }),
         ...(key === 'allow_anon_uploads' && { allowAnonUploads: enabled }),
+        ...(key === 'asset_previews_enabled' && { assetPreviewsEnabled: enabled }),
         ...(key === 'registration_enabled' && { registrationEnabled: enabled }),
         ...(key === 'image_proxy_enabled' && { imageProxyEnabled: enabled }),
         ...(key === 'image_cache_enabled' && { imageCacheEnabled: enabled }),
@@ -285,6 +289,27 @@ export default function AdminSettingsPage() {
               <span
                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                   siteSettings.uploadsEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-b border-nebula/10">
+            <div className="flex-1">
+              <p className="text-starlight font-medium">Enable Asset Previews</p>
+              <p className="text-sm text-starlight/60">
+                When enabled, uploads can include a small sample of preview assets (up to 100 items or 100MB).
+              </p>
+            </div>
+            <button
+              onClick={() => toggleSetting('asset_previews_enabled', !siteSettings.assetPreviewsEnabled, 'Asset previews')}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                siteSettings.assetPreviewsEnabled ? 'bg-nebula' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  siteSettings.assetPreviewsEnabled ? 'translate-x-6' : 'translate-x-1'
                 }`}
               />
             </button>

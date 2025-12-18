@@ -27,6 +27,8 @@ export const ALLOWED_CONTENT_TYPES = new Set([
   'audio/mpeg',
   'audio/ogg',
   'audio/wav',
+  'video/mp4',
+  'video/webm',
 ]);
 
 /**

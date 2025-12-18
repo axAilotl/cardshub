@@ -8,6 +8,7 @@
  */
 
 import type { ParseResultWithAssets } from './card-parser';
+import { computeContentHash } from './card-parser';
 
 export interface UploadProgress {
   stage: 'presigning' | 'uploading' | 'confirming' | 'done' | 'error';
@@ -34,6 +35,75 @@ interface FileDescriptor {
   filename: string;
   size: number;
   contentType: string;
+}
+
+type PreparedAsset = {
+  name: string;
+  type: string;
+  ext: string;
+  originalPath?: string;
+  buffer: Uint8Array;
+  contentType: string;
+};
+
+async function maybeTranscodeImageToWebp(asset: PreparedAsset): Promise<PreparedAsset> {
+  if (asset.contentType !== 'image/png' && asset.contentType !== 'image/jpeg' && asset.contentType !== 'image/gif') {
+    return asset;
+  }
+  if (asset.ext.toLowerCase() === 'webp') {
+    return asset;
+  }
+  // Browser-only (tests and SSR should skip)
+  if (typeof document === 'undefined' || typeof createImageBitmap === 'undefined') {
+    return asset;
+  }
+  // Skip tiny images
+  if (asset.buffer.byteLength < 64 * 1024) {
+    return asset;
+  }
+
+  try {
+    // TS: BlobPart expects ArrayBuffer-backed views (not SharedArrayBuffer).
+    // Copy into a fresh Uint8Array<ArrayBuffer> to keep Next.js type-check happy.
+    const inputBytes = new Uint8Array(asset.buffer);
+    const inputBlob = new Blob([inputBytes], { type: asset.contentType });
+    const bitmap = await createImageBitmap(inputBlob);
+
+    const maxDim = 768;
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close?.();
+      return asset;
+    }
+
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    const outBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Failed to encode WebP'))),
+        'image/webp',
+        0.82
+      );
+    });
+
+    const outBytes = new Uint8Array(await outBlob.arrayBuffer());
+    return {
+      ...asset,
+      ext: 'webp',
+      contentType: 'image/webp',
+      buffer: outBytes,
+    };
+  } catch {
+    return asset;
+  }
 }
 
 /**
@@ -67,11 +137,18 @@ export async function uploadWithPresignedUrls(
   parseResult: ParseResultWithAssets,
   visibility: 'public' | 'private' | 'unlisted',
   contentHash: string,
+  options?: { includeAssetPreviews?: boolean },
   onProgress?: (progress: UploadProgress) => void
 ): Promise<PresignedUploadResult> {
   const sessionId = crypto.randomUUID();
+  const includeAssetPreviews = options?.includeAssetPreviews ?? true;
 
   try {
+    // Special case: Voxta multi-character package -> create a collection
+    if (parseResult.isMultiCharPackage && parseResult.voxtaCharacters && parseResult.voxtaCharacters.length >= 2) {
+      return await uploadVoxtaCollectionWithPresignedUrls(file, parseResult, visibility, onProgress);
+    }
+
     // Stage 1: Request presigned URLs
     onProgress?.({ stage: 'presigning', percent: 0 });
 
@@ -96,17 +173,32 @@ export async function uploadWithPresignedUrls(
       });
     }
 
-    // Add extracted assets
-    if (parseResult.extractedAssets) {
-      parseResult.extractedAssets.forEach((asset, index) => {
-        filesToUpload.push({
-          key: `asset-${index}`,
-          filename: `${asset.name}.${asset.ext}`,
-          size: asset.buffer.byteLength,
+    // Prepare and (optionally) transcode extracted assets for preview
+    const preparedAssets: PreparedAsset[] = includeAssetPreviews
+      ? (parseResult.extractedAssets || []).map((asset) => ({
+          name: asset.name,
+          type: asset.type,
+          ext: asset.ext,
+          originalPath: asset.path,
+          buffer: asset.buffer,
           contentType: getContentType(asset.ext),
-        });
-      });
+        }))
+      : [];
+
+    // Convert large PNG/JPEG/GIF previews to smaller WebP samples (client-side)
+    const transcodedAssets: PreparedAsset[] = [];
+    for (const asset of preparedAssets) {
+      transcodedAssets.push(await maybeTranscodeImageToWebp(asset));
     }
+
+    transcodedAssets.forEach((asset, index) => {
+      filesToUpload.push({
+        key: `asset-${index}`,
+        filename: `${asset.name}.${asset.ext}`,
+        size: asset.buffer.byteLength,
+        contentType: asset.contentType,
+      });
+    });
 
     // Request presigned URLs
     const presignResponse = await fetch('/api/uploads/presign', {
@@ -146,20 +238,23 @@ export async function uploadWithPresignedUrls(
     }
 
     // Upload assets
-    if (parseResult.extractedAssets) {
-      for (let i = 0; i < parseResult.extractedAssets.length; i++) {
-        const asset = parseResult.extractedAssets[i];
-        const assetKey = `asset-${i}`;
-        const assetUrl = presignData.urls[assetKey];
-        if (assetUrl) {
-          onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100), currentFile: `${asset.name}.${asset.ext}` });
-          const assetBlob = new Blob([new Uint8Array(asset.buffer)], { type: getContentType(asset.ext) });
-          await uploadToR2(assetUrl.uploadUrl, assetBlob, getContentType(asset.ext));
-          uploadedFiles++;
-          onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
-        }
-      }
-    }
+    const ASSET_UPLOAD_BATCH_SIZE = 10;
+    await uploadInBatches(transcodedAssets, ASSET_UPLOAD_BATCH_SIZE, async (asset, index) => {
+      const assetKey = `asset-${index}`;
+      const assetUrl = presignData.urls[assetKey];
+      if (!assetUrl) return;
+
+      onProgress?.({
+        stage: 'uploading',
+        percent: Math.round((uploadedFiles / totalFiles) * 100),
+        currentFile: `${asset.name}.${asset.ext}`,
+      });
+
+      const assetBlob = new Blob([new Uint8Array(asset.buffer)], { type: asset.contentType });
+      await uploadToR2(assetUrl.uploadUrl, assetBlob, asset.contentType);
+      uploadedFiles++;
+      onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
+    });
 
     // Stage 3: Confirm upload
     onProgress?.({ stage: 'confirming', percent: 0 });
@@ -183,13 +278,15 @@ export async function uploadWithPresignedUrls(
       files: {
         original: { r2Key: presignData.urls.original.r2Key },
         ...(presignData.urls.icon && { icon: { r2Key: presignData.urls.icon.r2Key } }),
-        assets: parseResult.extractedAssets?.map((asset, i) => ({
-          r2Key: presignData.urls[`asset-${i}`]?.r2Key || '',
-          name: asset.name,
-          type: asset.type,
-          ext: asset.ext,
-          originalPath: asset.path || '',  // Original path inside package (e.g., "assets/icon/main.png")
-        })).filter(a => a.r2Key) || [],
+        assets: transcodedAssets
+          .map((asset, i) => ({
+            r2Key: presignData.urls[`asset-${i}`]?.r2Key || '',
+            name: asset.name,
+            type: asset.type,
+            ext: asset.ext,
+            originalPath: asset.originalPath || '',
+          }))
+          .filter(a => a.r2Key) || [],
       },
       visibility,
     };
@@ -211,7 +308,7 @@ export async function uploadWithPresignedUrls(
     return {
       success: true,
       slug: confirmData.data.slug,
-      isCollection: false,
+      isCollection: confirmData.type === 'collection',
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Upload failed';
@@ -221,6 +318,175 @@ export async function uploadWithPresignedUrls(
       error: message,
     };
   }
+}
+
+async function uploadVoxtaCollectionWithPresignedUrls(
+  file: File,
+  parseResult: ParseResultWithAssets,
+  visibility: 'public' | 'private' | 'unlisted',
+  onProgress?: (progress: UploadProgress) => void
+): Promise<PresignedUploadResult> {
+  const sessionId = crypto.randomUUID();
+
+  const characters = parseResult.voxtaCharacters || [];
+  if (characters.length < 2) {
+    throw new Error('Voxta collection upload requires 2+ characters');
+  }
+
+  // Stage 1: Presign
+  onProgress?.({ stage: 'presigning', percent: 0 });
+
+  const ext = file.name.split('.').pop()?.toLowerCase() || 'voxpkg';
+
+  const filesToUpload: FileDescriptor[] = [
+    {
+      key: 'original',
+      filename: `collection.${ext}`,
+      size: file.size,
+      contentType: getContentType(ext),
+    },
+  ];
+
+  for (const c of characters) {
+    if (!c.thumbnail) {
+      throw new Error(`Missing thumbnail for character ${c.id}`);
+    }
+    filesToUpload.push({
+      key: `thumb-${c.id}`,
+      filename: `thumb-${c.id}.png`,
+      size: c.thumbnail.byteLength,
+      contentType: 'image/png',
+    });
+  }
+
+  const presignResponse = await fetch('/api/uploads/presign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, files: filesToUpload }),
+  });
+
+  if (!presignResponse.ok) {
+    const error = await presignResponse.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to get upload URLs');
+  }
+
+  const presignData: PresignResponse = await presignResponse.json();
+  onProgress?.({ stage: 'presigning', percent: 100 });
+
+  // Stage 2: Upload to R2
+  onProgress?.({ stage: 'uploading', percent: 0 });
+
+  const totalFiles = filesToUpload.length;
+  let uploadedFiles = 0;
+
+  onProgress?.({ stage: 'uploading', percent: 0, currentFile: file.name });
+  await uploadToR2(presignData.urls.original.uploadUrl, file, getContentType(ext));
+  uploadedFiles++;
+  onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
+
+  const THUMB_UPLOAD_BATCH_SIZE = 10;
+  await uploadInBatches(
+    characters.filter((c) => !!c.thumbnail && !!presignData.urls[`thumb-${c.id}`]),
+    THUMB_UPLOAD_BATCH_SIZE,
+    async (c) => {
+      const urlKey = `thumb-${c.id}`;
+      const urlInfo = presignData.urls[urlKey];
+      if (!c.thumbnail || !urlInfo) return;
+
+      onProgress?.({
+        stage: 'uploading',
+        percent: Math.round((uploadedFiles / totalFiles) * 100),
+        currentFile: `thumb-${c.id}.png`,
+      });
+
+      const blob = new Blob([new Uint8Array(c.thumbnail)], { type: 'image/png' });
+      await uploadToR2(urlInfo.uploadUrl, blob, 'image/png');
+      uploadedFiles++;
+      onProgress?.({ stage: 'uploading', percent: Math.round((uploadedFiles / totalFiles) * 100) });
+    }
+  );
+
+  onProgress?.({ stage: 'uploading', percent: 100 });
+
+  // Stage 3: Confirm
+  onProgress?.({ stage: 'confirming', percent: 0 });
+
+  const pkg = (parseResult.voxtaPackageJson || {}) as Record<string, any>;
+  const collection = {
+    name: (pkg.Name as string) || parseResult.packageName || `${characters.length} Characters`,
+    description: (pkg.Description as string) || '',
+    creator: (pkg.Creator as string) || '',
+    explicitContent: !!pkg.ExplicitContent,
+    packageId: (pkg.Id as string) || null,
+    packageVersion: (pkg.Version as string) || null,
+    entryResourceKind: (pkg.EntryResource?.Kind as number) ?? null,
+    entryResourceId: (pkg.EntryResource?.Id as string) ?? null,
+    thumbnailResourceKind: (pkg.ThumbnailResource?.Kind as number) ?? null,
+    thumbnailResourceId: (pkg.ThumbnailResource?.Id as string) ?? null,
+    dateCreated: (pkg.DateCreated as string) || null,
+    dateModified: (pkg.DateModified as string) || null,
+    thumbnailCharacterId: (pkg.ThumbnailResource?.Id as string) ?? null,
+  };
+
+  const thumbnails = characters.map((c) => ({
+    characterId: c.id,
+    r2Key: presignData.urls[`thumb-${c.id}`]!.r2Key,
+  }));
+
+  const cards = await Promise.all(
+    characters.map(async (c) => {
+      const encoder = new TextEncoder();
+      const cardData = JSON.stringify(c.card.raw);
+      const contentHash = await computeContentHash(encoder.encode(cardData));
+
+      return {
+        characterId: c.id,
+        metadata: {
+          name: c.card.name,
+          description: c.card.description || '',
+          creator: c.card.creator || '',
+          creatorNotes: c.card.creatorNotes || '',
+          specVersion: c.card.specVersion,
+          sourceFormat: c.card.sourceFormat,
+          tokens: c.card.tokens,
+          metadata: c.card.metadata,
+          tags: c.card.tags,
+          contentHash,
+          cardData,
+        },
+      };
+    })
+  );
+
+  const confirmResponse = await fetch('/api/uploads/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'collection',
+      sessionId,
+      collection,
+      files: {
+        original: { r2Key: presignData.urls.original.r2Key },
+        thumbnails,
+      },
+      cards,
+      visibility,
+    }),
+  });
+
+  if (!confirmResponse.ok) {
+    const error = await confirmResponse.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to confirm upload');
+  }
+
+  const confirmData = await confirmResponse.json();
+  onProgress?.({ stage: 'done', percent: 100 });
+
+  return {
+    success: true,
+    slug: confirmData.data.slug,
+    isCollection: true,
+  };
 }
 
 /**
@@ -240,6 +506,17 @@ async function uploadToR2(url: string, data: File | Blob, contentType: string): 
   }
 }
 
+async function uploadInBatches<T>(
+  items: T[],
+  batchSize: number,
+  upload: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map((item, batchIndex) => upload(item, i + batchIndex)));
+  }
+}
+
 /**
  * Get content type from file extension
  */
@@ -256,6 +533,8 @@ function getContentType(ext: string): string {
     mp3: 'audio/mpeg',
     ogg: 'audio/ogg',
     wav: 'audio/wav',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
   };
   return types[ext.toLowerCase()] || 'application/octet-stream';
 }
